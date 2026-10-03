@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { ElementConstructor, EngineInterface, Register, RenderInput, SessionRateLimit, SvgProps, Timer } from 'claude-code'
 
-import { alt, readings, stack, strip, TONE } from './svg'
-import type { CompactMode, FooterMode, Limit, Live, Meter, Phase, WrapRule, GaugeSettings, ToolRow, TurnRow } from '../types'
+import { alt, PALETTE, readings, stack, strip } from './svg'
+import type { CompactMode, FooterMode, GaugeSettings, Limit, Live, Look, LookStyle, Meter, Phase, ToolRow, TurnRow, WrapRule } from '../types'
 
 const PANE = 'gauge'
 const SETTINGS_PANE = 'gauge-settings'
@@ -12,6 +12,7 @@ const DEFAULTS: GaugeSettings = {
   wrap7d: { isOn: false, at: 95 },
   compact: { mode: 'remind', at: 70 },
   footer: 'auto',
+  look: { style: 'classic', size: 'm' },
 }
 
 const meter = atom({ plugin: 'context-gauge', key: 'meter' } as const, null)
@@ -35,11 +36,19 @@ const WRAP_PROMPT = [
   'Keep it brief.',
 ].join('\n')
 
-// Muted palette, the same tones the SVG meters use.
-const C = {
-  ...TONE,
-  accent: '#a39bd6',
+// The text palette follows the chosen look, in the same tones the SVG meters use.
+const paletteFor = (style: LookStyle) => ({
+  ...PALETTE[style],
+  accent: style === 'classic' ? '#c96442' : '#a39bd6',
   rule: '#4a4d55',
+})
+let C = paletteFor('classic')
+
+// Read the settings while drawing (so a change redraws) and adopt their palette.
+async function lookOf($: EngineInterface) {
+  const s = await read($, settings)
+  C = paletteFor(s.look.style)
+  return s.look
 }
 
 // ---------- formatting ----------
@@ -99,6 +108,9 @@ const COMPACT_LABEL: Record<CompactMode, string> = { off: 'Off', remind: 'Remind
 const FOOTER_LABEL: Record<FooterMode, string> = { auto: 'Auto', on: 'On', off: 'Off' }
 const nextCompact: Record<CompactMode, CompactMode> = { off: 'remind', remind: 'auto', auto: 'off' }
 const nextFooter: Record<FooterMode, FooterMode> = { auto: 'on', on: 'off', off: 'auto' }
+const STYLE_LABEL: Record<LookStyle, string> = { classic: 'Classic', minimal: 'Minimal' }
+const SIZES: Look['size'][] = ['s', 'm', 'l']
+const stepSize = (size: Look['size'], d: number) => SIZES[Math.max(0, Math.min(2, SIZES.indexOf(size) + d))]!
 
 const clampPct = (n: number) => Math.max(30, Math.min(100, Math.round(n)))
 
@@ -175,6 +187,7 @@ async function loadSettings($: EngineInterface) {
     compact: saved?.compact ?? DEFAULTS.compact,
     footer:
       saved?.footer ?? (oldFooter === 'on' || oldFooter === 'off' || oldFooter === 'auto' ? oldFooter : DEFAULTS.footer),
+    look: saved?.look ?? DEFAULTS.look,
   }
   await update($, settings, () => s)
 }
@@ -296,6 +309,8 @@ const COMMANDS = [
   '/gauge wrap 7d 95|on|off   wrap-up at the weekly limit',
   '/gauge compact 70|remind|auto|off   when to /compact',
   '/gauge footer auto|on|off  line under each answer',
+  '/gauge look classic|minimal  display style',
+  '/gauge size s|m|l          text size',
 ].join('\n')
 
 // ---------- hooks ----------
@@ -344,6 +359,14 @@ export const register: Register = on => {
     if (sub === 'footer') {
       if (a === 'on' || a === 'off' || a === 'auto') await changeSettings($, x => ({ ...x, footer: a }))
       return { text: `Line under each answer: ${(await read($, settings)).footer}.` }
+    }
+    if (sub === 'look' && (a === 'classic' || a === 'minimal')) {
+      await changeSettings($, x => ({ ...x, look: { ...x.look, style: a } }))
+      return { text: `Display style: ${a}.` }
+    }
+    if (sub === 'size' && (a === 's' || a === 'm' || a === 'l')) {
+      await changeSettings($, x => ({ ...x, look: { ...x.look, size: a } }))
+      return { text: `Text size: ${a.toUpperCase()}.` }
     }
     if (sub === 'pane') {
       const opened = await $.ui.open({ id: PANE, title: 'Gauge' })
@@ -493,6 +516,7 @@ export const register: Register = on => {
     const w = await read($, wrap)
     await read($, tick)
     if (!m && !l) return next(e)
+    const look = await lookOf($)
     const now = await $.clock.now()
     const isNarrow = e.props.bodyColumns < 90
     const { Box, Text, Button } = $.ui.resolve(e)
@@ -503,14 +527,14 @@ export const register: Register = on => {
     const ctxColor = tone(ctx, 0.75, 0.9)
     const [on1, off1] = bar(ctx, isNarrow ? 8 : 14)
     const limits = (m?.limits ?? []).filter(x => !isNarrow || x.kind === 'five_hour')
-    const drawn = m && readings(m, ctx, now)
+    const drawn = m && readings(m, ctx, now, look.style)
 
     const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
 
     const meterRow =
       m && drawn && Svg ? (
         <Box flexDirection="row" alignItems="center" gap={2}>
-          <Svg source={strip(drawn, m.usd)} alt={alt(drawn, m.usd)} />
+          <Svg source={strip(drawn, m.usd, look)} alt={alt(drawn, m.usd)} />
           {gear}
         </Box>
       ) : (
@@ -671,6 +695,7 @@ async function settingsText($: EngineInterface) {
     'CONTEXT',
     `  /compact       ${compactText(s)}` + (auto ? `   (Claude auto-compacts at ${auto}%)` : ''),
     `LINE UNDER ANSWERS  ${s.footer}`,
+    `DISPLAY  ${s.look.style}, text ${s.look.size.toUpperCase()}`,
     '```',
     '```',
     COMMANDS,
@@ -682,6 +707,7 @@ async function settingsText($: EngineInterface) {
 
 async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
+  await lookOf($)
   const s = await read($, settings)
   const auto = autoCompactPercent(await read($, meter))
 
@@ -741,7 +767,35 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
           s.compact.mode !== 'off',
         )}
       </Box>
-      {head('Display', 'A line under each answer: Auto shows it where no band is drawn.')}
+      {head('Display', 'Classic: deep solid colors. Minimal: quiet tones, small caps.')}
+      <Box flexDirection="row" gap={1}>
+        <Text>{'Style'.padEnd(14)}</Text>
+        <Button
+          key="look-style"
+          label={STYLE_LABEL[s.look.style]}
+          onPress={() =>
+            changeSettings($, x => ({ ...x, look: { ...x.look, style: x.look.style === 'classic' ? 'minimal' : 'classic' } }))
+          }
+        />
+      </Box>
+      <Box flexDirection="row" gap={1}>
+        <Text>{'Text size'.padEnd(14)}</Text>
+        <Button
+          key="look-size-down"
+          label="−"
+          plain
+          dimColor
+          onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, -1) } }))}
+        />
+        <Text> {s.look.size.toUpperCase()} </Text>
+        <Button
+          key="look-size-up"
+          label="+"
+          plain
+          dimColor
+          onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, 1) } }))}
+        />
+      </Box>
       <Box flexDirection="row" gap={1}>
         <Text>{'Answer line'.padEnd(14)}</Text>
         <Button
@@ -764,12 +818,13 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
   const w = await read($, wrap)
   const s = await read($, settings)
   const collapsed = await read($, isCollapsed)
+  const look = await lookOf($)
   await read($, tick)
   const now = await $.clock.now()
   const width = Math.max(12, columns - 2)
   const barW = Math.max(6, Math.min(24, width - 18))
   const ctx = m ? ctxRatio(m) : 0
-  const drawn = m && readings(m, ctx, now)
+  const drawn = m && readings(m, ctx, now, look.style)
 
   const head = (title: string) => (
     <Box marginTop={1}>
@@ -812,7 +867,7 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
   const meters =
     m && drawn && Svg ? (
       <Box marginTop={1}>
-        <Svg source={stack(drawn, width * 7)} alt={alt(drawn, m.usd)} />
+        <Svg source={stack(drawn, width * 7, look)} alt={alt(drawn, m.usd)} />
       </Box>
     ) : (
       m && (

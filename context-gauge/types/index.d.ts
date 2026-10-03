@@ -55,11 +55,16 @@ export type CompactMode = 'off' | 'remind' | 'auto'
 // One wrap-up rule: on or off, and the percent of its limit window it fires at.
 export type WrapRule = { isOn: boolean; at: number }
 
+export type LookStyle = 'classic' | 'minimal'
+
+export type Look = { style: LookStyle; size: 's' | 'm' | 'l' }
+
 export type GaugeSettings = {
   wrap5h: WrapRule
   wrap7d: WrapRule
   compact: { mode: CompactMode; at: number }
   footer: FooterMode
+  look: Look
 }
 
 export type Wrap = {

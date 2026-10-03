@@ -103,9 +103,9 @@ test('on mobile the /gauge output row is the live gauge', async ($, on) => {
   } as const
   const ui = await $.ui.mount({ ...row, surface: 'mobile' })
   expect(await ui.find({ type: 'Svg' })).toBeDefined()
-  expect(await shown(ui)).toMatch(/context 30%.*5 hour 42%/)
+  expect(await shown(ui)).toMatch(/context 30%.*5h 42%/)
   await measured($, measure(120_000, 55))
-  expect(await shown(ui)).toMatch(/context 60%.*5 hour 55%/)
+  expect(await shown(ui)).toMatch(/context 60%.*5h 55%/)
   await ui.unmount()
 })
 
@@ -235,4 +235,34 @@ test('the /compact rule reminds once when idle past it', async ($, on) => {
   await measured($, measure(150_000, 10))
   await measured($, measure(152_000, 10))
   expect(toasts.filter(t => /Context 75%: a good point to \/compact/.test(t))).toHaveLength(1)
+})
+
+test('display style and text size are set from the settings page', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(60_000, 42))
+  const row = {
+    plugin: 'context-gauge',
+    component: 'CommandOutput',
+    props: { command: 'gauge', args: 'settings', text: '', isErrored: false },
+  } as const
+  const svgOf = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    const source = String((await ui.find({ type: 'Svg' }))?.props.source)
+    await ui.unmount()
+    return source
+  }
+  const classic = await svgOf()
+  expect(classic).toMatch(/>Context</)
+  expect(classic).toMatch(/scale\(1\.18\)/)
+  const ui = await $.ui.mount({ ...row, surface: 'desktop' })
+  await ui.press({ key: 'look-style' })
+  await ui.press({ key: 'look-size-up' })
+  await ui.unmount()
+  const minimal = await svgOf()
+  expect(minimal).toMatch(/>CONTEXT</)
+  expect(minimal).toMatch(/scale\(1\.36\)/)
+  expect((await run($, 'settings')).text).toMatch(/DISPLAY  minimal, text L/)
+  expect((await run($, 'look classic')).text).toBe('Display style: classic.')
+  expect((await run($, 'size s')).text).toBe('Text size: S.')
 })

@@ -14,7 +14,7 @@ Desktop 和手機 app 畫一行高的 SVG 細條（上方是輸入框上的細�
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
-- **設定頁**：`/gauge settings`，或細條旁的 ⚙
+- **設定頁**：`/gauge settings`，或細條旁的 ⚙；可切換顯示風格與文字大小
 
 ### 安裝（CLI 和 Desktop 都適用）
 
@@ -52,6 +52,8 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge wrap 5h 90\|on\|off` | 5 小時額度的自動收尾 |
 | `/gauge wrap 7d 95\|on\|off` | 週額度的自動收尾 |
 | `/gauge compact 70\|remind\|auto\|off` | context 到幾 % 時提醒或自動 /compact |
+| `/gauge look classic\|minimal` | 顯示風格：Classic（深綠/深黃/深紅，預設）或 Minimal（低飽和、小型大寫標籤） |
+| `/gauge size s\|m\|l` | 文字大小（預設 M） |
 | `/gauge footer auto\|on\|off` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |
 
 上方細條只在終端與 Claude Code Desktop 顯示，手機 app 不顯示。右側面板要在終端全螢幕、寬度 110 欄以上才會停靠在右側。雲端 session 沒有可以畫 mod 介面的客戶端，所以只能看 `/gauge` 的文字快照。
