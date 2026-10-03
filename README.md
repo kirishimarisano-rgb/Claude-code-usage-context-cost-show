@@ -4,7 +4,7 @@
 
 ![preview](docs/preview-dark.png)
 
-Desktop 和手機 app 畫小巧的 SVG 細條（上方是輸入框上的細條，下方是面板與 `/gauge`）；終端畫文字版。
+Desktop 和手機 app 畫一行高的 SVG 細條（上方是輸入框上的細條，下方是面板與 `/gauge`），字體是內嵌的 Inter；終端畫文字版。
 
 輸入框上方的用量細條，加上可折疊的右側面板。
 
@@ -85,3 +85,7 @@ claude plugin install context-gauge@kirishima-mods
 claude plugin validate context-gauge
 claude plugin test context-gauge
 ```
+
+### 字體授權
+
+SVG 內嵌 [Inter](https://github.com/rsms/inter) 4.1 的子集（Medium、SemiBold），採 SIL Open Font License 1.1，全文見 `context-gauge/fonts/OFL.txt`。

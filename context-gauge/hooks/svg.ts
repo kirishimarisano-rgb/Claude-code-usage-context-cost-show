@@ -1,6 +1,7 @@
 // Small SVG meters for the surfaces that draw `Svg` (desktop, mobile, VS Code).
 // Pure string builders: no `$`, no state.
 
+import { INTER_500, INTER_600 } from './font'
 import type { Limit, Meter } from '../types'
 
 export type Reading = {
@@ -20,10 +21,12 @@ const toneOf = (ratio: number, warnAt: number, hotAt: number) =>
 
 const STYLE = `
   <style>
-    text { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
-    .label { fill: #7d838e; font-size: 8.5px; letter-spacing: 0.12em; font-weight: 600; }
-    .value { fill: #c9cdd4; font-size: 11px; font-weight: 600; }
-    .sub { fill: #6f7581; font-size: 9.5px; }
+    @font-face { font-family: GaugeInter; font-weight: 500; src: url(data:font/woff2;base64,${INTER_500}) format('woff2'); }
+    @font-face { font-family: GaugeInter; font-weight: 600; src: url(data:font/woff2;base64,${INTER_600}) format('woff2'); }
+    text { font-family: GaugeInter, "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif; font-feature-settings: "tnum"; font-weight: 500; text-rendering: geometricPrecision; }
+    .label { fill: #7a808b; font-size: 8px; letter-spacing: 0.8px; }
+    .value { fill: #cfd2d8; font-size: 10.5px; font-weight: 600; }
+    .sub { fill: #6c727d; font-size: 9.5px; }
     .track { fill: rgba(140, 146, 158, 0.16); }
     @media (prefers-color-scheme: light) {
       .value { fill: #2b3038; }
@@ -75,40 +78,47 @@ const colorOf = (r: Reading) =>
 
 const fillOf = (r: Reading, w: number) => (r.ratio === null ? 0 : Math.max(0, Math.min(1, r.ratio)) * w)
 
-// One quiet row for the band: label, value and sub on a line, a hairline bar beneath.
+// One thin line for the band: label, value, a short hairline bar, the note.
+const SEG: Record<string, { value: number; bar: number; sub: number; end: number }> = {
+  ctx: { value: 51, bar: 80, sub: 116, end: 186 },
+  five_hour: { value: 42, bar: 71, sub: 107, end: 148 },
+  seven_day: { value: 37, bar: 66, sub: 102, end: 143 },
+}
+
 export function strip(rs: Reading[], usd: number | undefined): string {
-  const w = 132
-  const gap = 22
+  const gap = 20
+  const mid = 11
   let x = 0
   const parts = rs.map(r => {
+    const g = SEG[r.key] ?? SEG.five_hour!
     const c = colorOf(r)
-    const fill = fillOf(r, w)
-    const g = `
+    const fill = fillOf(r, 28)
+    const out = `
       <g transform="translate(${x},0)">
-        <text class="label" x="0" y="10">${r.label}</text>
-        <text class="value" x="${w}" y="10.5" text-anchor="end" ${r.isHot ? `style="fill:${TONE.hot}"` : ''}>${r.value}</text>
-        <rect class="track" x="0" y="15" width="${w}" height="2.5" rx="1.25"/>
-        ${fill > 0 ? `<rect x="0" y="15" width="${Math.max(2.5, fill)}" height="2.5" rx="1.25" fill="${c}"/>` : ''}
-        <text class="sub" x="0" y="28">${r.sub}</text>
+        <text class="label" x="0" y="${mid}">${r.label}</text>
+        <text class="value" x="${g.value}" y="${mid + 0.5}" ${r.isHot ? `style="fill:${TONE.hot}"` : ''}>${r.value}</text>
+        <rect class="track" x="${g.bar}" y="${mid - 4}" width="28" height="2.5" rx="1.25"/>
+        ${fill > 0 ? `<rect x="${g.bar}" y="${mid - 4}" width="${Math.max(2.5, fill)}" height="2.5" rx="1.25" fill="${c}"/>` : ''}
+        <text class="sub" x="${g.sub}" y="${mid}">${r.sub}</text>
       </g>`
-    x += w + gap
-    return g
+    x += g.end + gap
+    return out
   })
   if (usd !== undefined) {
     parts.push(`
       <g transform="translate(${x},0)">
-        <text class="label" x="0" y="10">COST</text>
-        <text class="value" x="0" y="25">$${usd.toFixed(2)}</text>
+        <text class="label" x="0" y="${mid}">COST</text>
+        <text class="value" x="33" y="${mid + 0.5}">$${usd.toFixed(2)}</text>
       </g>`)
-    x += 56
+    x += 70
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x}" height="31" viewBox="0 0 ${x} 31">${STYLE}${parts.join('')}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x}" height="15" viewBox="0 0 ${x} 15">${STYLE}${parts.join('')}</svg>`
 }
 
 // The same meters stacked, for the pane and the /gauge row.
 export function stack(rs: Reading[], width: number): string {
   const w = Math.max(160, Math.min(320, width))
-  const rowH = 32
+  const rowH = 26
   const parts = rs.map((r, i) => {
     const c = colorOf(r)
     const fill = fillOf(r, w)
@@ -121,7 +131,7 @@ export function stack(rs: Reading[], width: number): string {
         ${fill > 0 ? `<rect x="0" y="16" width="${Math.max(2.5, fill)}" height="2.5" rx="1.25" fill="${c}"/>` : ''}
       </g>`
   })
-  const h = rs.length * rowH - 10
+  const h = rs.length * rowH - 6
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${STYLE}${parts.join('')}</svg>`
 }
 
