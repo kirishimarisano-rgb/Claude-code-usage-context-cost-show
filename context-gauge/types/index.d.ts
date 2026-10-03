@@ -48,6 +48,8 @@ export type TurnRow = {
   isAborted: boolean
 }
 
+export type FooterMode = 'auto' | 'on' | 'off'
+
 export type Wrap = {
   isOn: boolean
   atPercent: number
@@ -64,6 +66,7 @@ declare module 'claude-code' {
       isCollapsed: boolean
       wrap: Wrap
       tick: number
+      footer: FooterMode
     }
   }
 }

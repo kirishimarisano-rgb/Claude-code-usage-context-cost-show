@@ -42,10 +42,28 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | --- | --- |
 | `/gauge` | 在對話裡顯示儀表（只能顯示文字的客戶端會看到文字快照） |
 | `/gauge pane` | 打開右側面板（`f` 折疊/展開） |
+| `/gauge footer on\|off\|auto` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |
 | `/gauge wrap on\|off` | 開關自動收尾 |
 | `/gauge wrap 95` | 設定自動收尾門檻（50–100） |
 
 上方細條只在終端與 Claude Code Desktop 顯示，手機 app 不顯示。右側面板要在終端全螢幕、寬度 110 欄以上才會停靠在右側。雲端 session 沒有可以畫 mod 介面的客戶端，所以只能看 `/gauge` 的文字快照。
+
+### 雲端 session（claude.ai/code）
+
+連進雲端 session 的客戶端（網頁、Desktop、手機）都不畫 mod 介面，所以沒有上方細條和面板。改成在每輪回答下面附一行用量：
+
+```
+◆ ctx 20% · 5h 12% ↻4h17m · 7d 93% ↻1h47m · $5.01 · 2m13s (think 40s) · 14 tools · 52 tok/s
+```
+
+這行只顯示給你看，不會進入模型讀到的對話紀錄。
+
+要讓每個雲端 session 都自動裝好，在雲端環境的 **setup script** 加上：
+
+```sh
+claude plugin marketplace add kirishimarisano-rgb/Claude-code-usage-context-cost-show
+claude plugin install context-gauge@kirishima-mods
+```
 
 ### 讀寫範圍
 

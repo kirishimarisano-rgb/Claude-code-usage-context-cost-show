@@ -125,3 +125,23 @@ test('/gauge answers a text snapshot for clients that draw text', async ($, on) 
   expect(r.text).toMatch(/5h .* 42%/)
   expect(r.text).toMatch(/clients: terminal/)
 })
+
+test('with no client drawing, a gauge line goes under each answer', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  await measured($, measure(60_000, 42))
+  await $.turn.start({ text: 'go', turnId: 't2' })
+  const r = await $.turn.complete({ answer: 'done', durationMs: 5000, isAborted: false, turnId: 't2', reason: 'answer' })
+  expect(r.text).toMatch(/^◆ ctx 30% · 5h 42%.* · \$1\.84 · 5s/)
+})
+
+test('with a terminal attached, the answer is left alone', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  await measured($, measure(60_000, 42))
+  await $.turn.start({ text: 'go', turnId: 't3' })
+  const r = await $.turn.complete({ answer: 'done', durationMs: 5000, isAborted: false, turnId: 't3', reason: 'answer' })
+  expect(r.text).toBe('done')
+})

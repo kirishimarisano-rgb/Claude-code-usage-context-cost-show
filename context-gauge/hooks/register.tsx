@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderInput, SessionRateLimit, Timer } from 'claude-code'
 
-import type { Limit, Live, Meter, Phase, ToolRow, TurnRow, Wrap } from '../types'
+import type { FooterMode, Limit, Live, Meter, Phase, ToolRow, TurnRow, Wrap } from '../types'
 
 const P = 'context-gauge'
 const PANE = 'gauge'
@@ -17,6 +17,9 @@ const wrap = atom({ plugin: 'context-gauge', key: 'wrap' } as const, {
   fired: [],
 } as Wrap)
 const tick = atom({ plugin: 'context-gauge', key: 'tick' } as const, 0)
+// `auto`: a gauge line under each answer when no client draws the band
+// (a cloud session seen from the web, desktop or mobile app).
+const footer = atom({ plugin: 'context-gauge', key: 'footer' } as const, 'auto' as FooterMode)
 
 const WRAP_DELAY_MS = 10_000
 const NOTIFY_AFTER_MS = 20_000
@@ -212,8 +215,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'gauge',
-      description: 'Context gauge in the transcript; `pane` for the side pane, `wrap on|off|<percent>`',
-      argumentHint: '[pane | wrap on|off|<percent>]',
+      description: 'Context gauge in the transcript; `pane` for the side pane, `footer on|off|auto`, `wrap on|off|<percent>`',
+      argumentHint: '[pane | footer on|off|auto | wrap on|off|<percent>]',
     })
     const saved = (await $.store.get('wrap')) as Partial<Wrap> | undefined
     await update($, wrap, w => ({
@@ -222,6 +225,8 @@ export const register: Register = on => {
       atPercent: saved?.atPercent ?? w.atPercent,
       pending: null,
     }))
+    const savedFooter = await $.store.get('footer')
+    if (savedFooter === 'on' || savedFooter === 'off' || savedFooter === 'auto') await update($, footer, () => savedFooter)
     const collapsed = await $.store.get('isCollapsed')
     if (typeof collapsed === 'boolean') await update($, isCollapsed, () => collapsed)
     await refreshBreakdown($)
@@ -243,6 +248,14 @@ export const register: Register = on => {
       }
       const w = await read($, wrap)
       return { text: `Auto wrap-up is ${w.isOn ? 'on' : 'off'} at ${w.atPercent}%. Use /gauge wrap on|off|<50-100>.` }
+    }
+    if (sub === 'footer') {
+      if (arg === 'on' || arg === 'off' || arg === 'auto') {
+        await update($, footer, () => arg)
+        await $.store.set('footer', arg)
+        return { text: `Gauge line under each answer: ${arg}.` }
+      }
+      return { text: `Gauge line under each answer: ${await read($, footer)}. Use /gauge footer on|off|auto.` }
     }
     if (sub === 'pane') {
       const opened = await $.ui.open({ id: PANE, title: 'Gauge' })
@@ -359,6 +372,13 @@ export const register: Register = on => {
       }
       await update($, history, h => [...h, row].slice(-20))
       await update($, live, () => null)
+      const mode = await read($, footer)
+      const isShown = mode === 'on' || (mode === 'auto' && (await $.session.surfaces()).length === 0)
+      if (isShown) {
+        const answered = await next(e)
+        // A text other than the answer is shown beneath it; the model never reads it.
+        return { ...answered, text: await footerLine($, row) }
+      }
       if (e.isAborted) {
         $.ui.toast(`■ Stopped after ${dur(e.durationMs)}`)
       } else if (e.durationMs >= NOTIFY_AFTER_MS) {
@@ -490,6 +510,21 @@ export const register: Register = on => {
   on('ui.render', { component: 'CommandOutput', props: { command: 'gauge' } }, ($, e, next) =>
     e.props.args.trim() !== '' ? next(e) : drawGauge($, e, e.viewport?.columns ?? 60),
   )
+}
+
+async function footerLine($: EngineInterface, row: TurnRow) {
+  const m = await read($, meter)
+  const now = await $.clock.now()
+  const parts: string[] = []
+  if (m) {
+    parts.push(`ctx ${m.percent ?? 0}%` + (ctxRatio(m) >= 0.9 ? ' ⚠ auto-compact soon' : ''))
+    for (const x of m.limits) parts.push(`${limitLabel(x.kind)} ${x.percent}% ${resetIn(x, now)}`.trim())
+    if (m.usd !== undefined) parts.push(`$${m.usd.toFixed(2)}`)
+  }
+  parts.push(`${dur(row.ms)}` + (row.thinkMs ? ` (think ${dur(row.thinkMs)})` : ''))
+  if (row.tools) parts.push(`${row.tools} tools`)
+  if (row.tps) parts.push(`${row.tps} tok/s`)
+  return `◆ ${parts.join(' · ')}`
 }
 
 async function snapshot($: EngineInterface) {
