@@ -137,6 +137,7 @@ A liquid-glass widget for the desktop that shows every local Claude Code session
 - **Left**: what the chosen session is doing (thinking, writing, which tool), a ring for its task list, time spent and **roughly how long is left**, plus context, 5-hour and weekly usage, and cost.
 - **Right, the hub**: one row per session with a status light, what it is doing, a progress bar and times; hover for ■ Stop.
 - **Done notice**: a Windows notification when a task over 10 seconds finishes, fails or is stopped.
+- Clear glass by default: the desktop shows through, with a tint you set. Windows' frosted acrylic is an option, but Windows turns it grey while the window is not focused.
 - Keep it on top or shrink it to a pill; it remembers where you put it. Traditional Chinese and English.
 
 It comes in two parts: the desktop app (`claude-widget/`) and the `widget-bridge` mod, which sends each session's status to it.

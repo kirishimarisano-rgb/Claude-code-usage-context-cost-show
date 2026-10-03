@@ -1,5 +1,10 @@
 # Changelog
 
+## Claude Widget 0.3.0
+
+- Clear glass by default: the desktop shows through untouched, with a tint you set (Settings → Tint) and a lit rim. Windows' frosted acrylic is still there (Settings → Background), but Windows turns it solid grey while the window is not focused.
+- Settings fit the window; the port moved into the note at the bottom.
+
 ## Claude Widget 0.2.0
 
 - A new look: lighter glass that lets Windows' acrylic show through, a rim of light, a soft sheen and fine grain; no Claude mark; finer line icons; model names written as "Opus 5.5"; time spent, time left and cost as figures; a new app icon.

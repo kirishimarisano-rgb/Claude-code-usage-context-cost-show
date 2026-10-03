@@ -43,13 +43,18 @@
     </div>
     <div class="rows">
       <label class="row"><span id="s-notify"></span><input id="notify" type="checkbox"></label>
+      <label class="row"><span id="s-look"></span>
+        <select id="look"><option value="clear"></option><option value="frosted"></option></select>
+      </label>
+      <label class="row" id="tint-row"><span id="s-tint"></span><input id="tint" type="range" min="0" max="90" step="5"></label>
       <label class="row"><span id="s-lang"></span>
         <select id="lang"><option value="zh">繁體中文</option><option value="en">English</option></select>
       </label>
-      <div class="row"><span id="s-port"></span><span id="port" class="dim mono"></span></div>
     </div>
-    <p id="s-privacy" class="dim small"></p>
-    <button id="s-done" class="chip accent"></button>
+    <div class="foot-row">
+      <p id="s-privacy" class="dim small"></p>
+      <button id="s-done" class="chip accent"></button>
+    </div>
   </section>
 </main>
 <script src="app.js"></script>

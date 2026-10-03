@@ -17,8 +17,9 @@ const WORDS = {
     ago: '前',
     s: {
       title: '設定', pairHint: '在每台電腦的 Claude Code 裡打一次這行，之後每個本機 session 都會自動出現。',
+      look: '背景', clear: '透明', frosted: '毛玻璃', tint: '底色深淺',
       copy: '複製', copied: '已複製', notify: '完成時通知（任務超過 10 秒）', lang: '語言', port: '連接埠', done: '完成',
-      privacy: '只聽本機 127.0.0.1，資料不會離開這台電腦。沒有這組配對碼的程式送不進來。',
+      privacy: '只聽本機 127.0.0.1:47615，資料不會離開這台電腦。毛玻璃在視窗沒被點選時，Windows 會換成灰色。',
     },
   },
   en: {
@@ -35,8 +36,9 @@ const WORDS = {
     ago: 'ago',
     s: {
       title: 'Settings', pairHint: 'Run this once in Claude Code on this computer; every local session then shows up.',
+      look: 'Background', clear: 'Clear', frosted: 'Frosted', tint: 'Tint',
       copy: 'Copy', copied: 'Copied', notify: 'Notify when a task ends (over 10 s)', lang: 'Language', port: 'Port', done: 'Done',
-      privacy: 'Listens on 127.0.0.1 only; nothing leaves this computer. Programs without this code are refused.',
+      privacy: 'Listens on 127.0.0.1:47615 only; nothing leaves this computer. Windows turns Frosted grey while the window is not focused.',
     },
   },
 }
@@ -250,6 +252,10 @@ function draw() {
   const limits = views.find(v => v.s.limits?.length)?.s.limits ?? []
 
   $('app').classList.toggle('compact', state.compact)
+  const root = document.documentElement
+  root.classList.toggle('clear', state.clear !== false)
+  root.classList.toggle('frosted', state.clear === false)
+  root.style.setProperty('--tint', String((state.tint ?? 30) / 100))
   $('summary').textContent = running ? W.running(running) : ''
   $('summary').classList.toggle('live', running > 0)
   $('hub-title').textContent = W.hub
@@ -272,10 +278,15 @@ function drawSettings() {
   if ($('copy').dataset.done !== '1') $('copy-text').textContent = W.s.copy
   $('s-notify').textContent = W.s.notify
   $('notify').checked = state.notify
+  $('s-look').textContent = W.s.look
+  $('look').options[0].textContent = W.s.clear
+  $('look').options[1].textContent = W.s.frosted
+  $('look').value = state.clear === false ? 'frosted' : 'clear'
+  $('s-tint').textContent = W.s.tint
+  if (document.activeElement !== $('tint')) $('tint').value = String(state.tint ?? 30)
+  $('tint-row').hidden = state.clear === false
   $('s-lang').textContent = W.s.lang
   $('lang').value = state.lang
-  $('s-port').textContent = W.s.port
-  $('port').textContent = `127.0.0.1:${state.port}`
   $('s-privacy').textContent = W.s.privacy
   $('s-done').textContent = W.s.done
 }
@@ -339,6 +350,12 @@ document.addEventListener('click', async e => {
 })
 $('notify').addEventListener('change', e => setPref('notify', e.target.checked))
 $('lang').addEventListener('change', e => setPref('lang', e.target.value))
+$('look').addEventListener('change', e => setPref('clear', e.target.value === 'clear'))
+$('tint').addEventListener('input', e => {
+  state.tint = Number(e.target.value)
+  draw()
+})
+$('tint').addEventListener('change', e => setPref('tint', Number(e.target.value)))
 
 refresh()
 setInterval(refresh, 1000)
@@ -351,7 +368,7 @@ function demo(cmd, args) {
     document.documentElement.classList.add('demo')
     const base = { v: 1, agents: 0, limits: [{ kind: 'five_hour', percent: 34 }, { kind: 'seven_day', percent: 71 }] }
     demo.s = {
-      token: 'k7Qm2vX9pL4tR8wZ3nY6', port: 47615, pinned: true, compact: false, notify: true,
+      token: 'k7Qm2vX9pL4tR8wZ3nY6', port: 47615, pinned: true, compact: false, notify: true, clear: true, tint: 30,
       lang: new URLSearchParams(location.search).get('lang') || 'zh', paired: true,
       sessions: [
         { ...base, id: 'a', project: 'shop-frontend', model: 'claude-opus-5-5', effort: 'xhigh', status: 'running', phase: 'tool',

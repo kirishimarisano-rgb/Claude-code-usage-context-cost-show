@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tauri::window::{Color, Effect, EffectsBuilder};
 use tauri::{AppHandle, LogicalSize, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
@@ -32,6 +33,21 @@ struct Prefs {
     compact: bool,
     notify: bool,
     lang: String,
+    // Clear glass (the desktop shows through) or Windows' frosted acrylic,
+    // which Windows turns solid grey while the window is not focused.
+    #[serde(default = "is_clear")]
+    clear: bool,
+    // How dark the tint behind the text is, 0 to 90.
+    #[serde(default = "default_tint")]
+    tint: u8,
+}
+
+fn is_clear() -> bool {
+    true
+}
+
+fn default_tint() -> u8 {
+    30
 }
 
 struct Shared {
@@ -57,7 +73,15 @@ fn load_prefs(path: &PathBuf) -> Prefs {
         Some(p) if p.token.len() >= 16 && p.token.chars().all(|c| c.is_ascii_alphanumeric()) => p,
         _ => {
             // The window picks the language on its first run, from the system's.
-            let p = Prefs { token: new_token(), pinned: true, compact: false, notify: true, lang: String::new() };
+            let p = Prefs {
+                token: new_token(),
+                pinned: true,
+                compact: false,
+                notify: true,
+                lang: String::new(),
+                clear: is_clear(),
+                tint: default_tint(),
+            };
             save_prefs(path, &p);
             p
         }
@@ -155,6 +179,8 @@ fn state(shared: State<'_, Arc<Shared>>) -> Value {
         "compact": prefs.compact,
         "notify": prefs.notify,
         "lang": prefs.lang,
+        "clear": prefs.clear,
+        "tint": prefs.tint,
         "paired": hub.has_heard,
         "error": hub.error,
         "sessions": sessions,
@@ -182,6 +208,11 @@ fn set_pref(app: AppHandle, shared: State<'_, Arc<Shared>>, key: String, value: 
             size_window(&app, b);
         }
         ("notify", Value::Bool(b)) => prefs.notify = b,
+        ("clear", Value::Bool(b)) => {
+            prefs.clear = b;
+            dress_window(&app, b);
+        }
+        ("tint", Value::Number(n)) => prefs.tint = n.as_u64().unwrap_or(30).min(90) as u8,
         ("lang", Value::String(s)) if s == "zh" || s == "en" => prefs.lang = s,
         _ => return Err("unknown setting".into()),
     }
@@ -192,6 +223,21 @@ fn set_pref(app: AppHandle, shared: State<'_, Arc<Shared>>, key: String, value: 
 #[tauri::command]
 fn quit(app: AppHandle) {
     app.exit(0);
+}
+
+// Clear: no backdrop and no frame, the page draws its own rounded glass.
+// Frosted: Windows' acrylic with its frame, which rounds the corners.
+fn dress_window(app: &AppHandle, is_clear: bool) {
+    if let Some(w) = app.get_webview_window("main") {
+        if is_clear {
+            let _ = w.set_effects(None);
+            let _ = w.set_shadow(false);
+        } else {
+            let frosted = EffectsBuilder::new().effect(Effect::Acrylic).color(Color(30, 24, 22, 120)).build();
+            let _ = w.set_effects(frosted);
+            let _ = w.set_shadow(true);
+        }
+    }
 }
 
 fn size_window(app: &AppHandle, is_compact: bool) {
@@ -218,13 +264,14 @@ fn main() {
         .setup(|app| {
             let path = app.path().app_config_dir()?.join("prefs.json");
             let prefs = load_prefs(&path);
-            let (pinned, compact) = (prefs.pinned, prefs.compact);
+            let (pinned, compact, clear) = (prefs.pinned, prefs.compact, prefs.clear);
             let shared = Arc::new(Shared { prefs: Mutex::new(prefs), hub: Mutex::new(Hub::default()), path });
             app.manage(shared.clone());
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_always_on_top(pinned);
             }
             size_window(app.handle(), compact);
+            dress_window(app.handle(), clear);
             let handle = app.handle().clone();
             std::thread::spawn(move || serve(handle, shared));
             Ok(())
