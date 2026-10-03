@@ -24,22 +24,30 @@ const measure = (tokens: number, fiveHour: number) => ({
   changed: ['context', 'rateLimits', 'cost'] as ('context' | 'rateLimits' | 'cost')[],
 })
 
+// Toasts the plugin showed, newest last.
+const toasts: string[] = []
+
 // What the engine last measured; `session.usage` answers the same figures.
 let last: Measure = measure(0, 0)
 
 // The engine beneath the plugin: clock, usage figures, measurement, turns.
 function engine(on: On, onAbort: (turnId: string) => void = () => {}) {
-  mock.clock(on, { now: 1_000_000 })
+  const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   on('session.usage', () => ({
     value: { startedAt: 0, context: last.context, rateLimits: last.rateLimits, cost: last.cost },
   }))
   on('session.measure', (_$, e) => ({ changed: [...e.changed] }))
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.abort', (_$, e) => {
     onAbort(e.turnId)
     return { value: undefined }
   })
+  return clock
 }
 
 // The text a drawing shows: its Text elements, or its Svg's alt where it draws one.
@@ -154,4 +162,29 @@ test('with a terminal attached, the answer is left alone', async ($, on) => {
   await $.turn.start({ text: 'go', turnId: 't3' })
   const r = await $.turn.complete({ answer: 'done', durationMs: 5000, isAborted: false, turnId: 't3', reason: 'answer' })
   expect(r.text).toBe('done')
+})
+
+test('auto wrap-up waits for a running task, then fires once', async ($, on) => {
+  const clock = engine(on)
+  toasts.length = 0
+  const sent = () => toasts.filter(t => /wrap-up prompt (not )?sent/.test(t)).length
+  await measured($, measure(60_000, 10))
+  await $.command.run({ command: 'gauge', args: 'wrap on', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
+
+  // Idle past the threshold: nothing arms.
+  await measured($, measure(60_000, 95))
+  await clock.advance(15_000)
+  expect(toasts.some(t => /wrap-up prompt in/.test(t))).toBe(false)
+
+  // A task starts: the countdown runs, then the wrap-up is sent into the turn.
+  // (The test kit stands in for no session.append, so it reports "not sent".)
+  await $.turn.start({ text: 'go', turnId: 't4' })
+  expect(toasts.some(t => /5h 95%: wrap-up prompt in 10s/.test(t))).toBe(true)
+  await clock.advance(11_000)
+  expect(sent()).toBe(1)
+
+  // Once per limit window.
+  await $.turn.start({ text: 'again', turnId: 't5' })
+  await clock.advance(11_000)
+  expect(sent()).toBe(1)
 })

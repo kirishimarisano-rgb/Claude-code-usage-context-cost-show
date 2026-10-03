@@ -154,7 +154,9 @@ async function refreshBreakdown($: EngineInterface) {
 
 async function checkWrap($: EngineInterface, limits: readonly SessionRateLimit[]) {
   const w = await read($, wrap)
-  if (!w.isOn || w.pending) return
+  // Only while a task runs: idle, there is nothing to wrap up, and the one
+  // chance per limit window is kept for the next task.
+  if (!w.isOn || w.pending || !(await read($, live))) return
   const hit = limits.find(
     l => (l.kind === 'five_hour' || l.kind === 'seven_day') && l.percentUsed >= w.atPercent,
   )
@@ -186,8 +188,12 @@ async function fireWrap($: EngineInterface) {
   await update($, wrap, x => ({ ...x, fired: [...x.fired, w.pending!.key].slice(-20), pending: null }))
   if (await read($, live)) {
     // Joins the running turn: the model reads it at its next step.
-    await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: WRAP_PROMPT }] } })
-    $.ui.toast(`${w.pending.label}: wrap-up prompt sent`)
+    try {
+      await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: WRAP_PROMPT }] } })
+      $.ui.toast(`${w.pending.label}: wrap-up prompt sent`)
+    } catch (error) {
+      $.ui.toast(`${w.pending.label}: wrap-up prompt not sent (${String(error).slice(0, 80)})`, { timeoutMs: 8000 })
+    }
   } else {
     $.ui.toast(`${w.pending.label}: limit nearly used (idle, nothing to wrap up)`, { timeoutMs: 8000 })
   }
@@ -311,6 +317,7 @@ export const register: Register = on => {
       tools: [],
     }))
     await ensureTicker($)
+    await checkWrap($, (await $.session.usage()).rateLimits)
 
     return next(e)
   })
