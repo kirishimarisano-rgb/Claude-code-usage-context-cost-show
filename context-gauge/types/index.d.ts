@@ -69,8 +69,6 @@ export type ModelPrefs = {
   slots: Slot[]
   // Fable is for Max plans: its positions stay locked until this is set.
   hasMax: boolean
-  // The draggable track beside the name; the name alone when off.
-  isTrack: boolean
 }
 
 export type GaugeSettings = {

@@ -604,15 +604,42 @@ test('the status panel checks status.claude.com only on Refresh', async ($, on) 
   await band.unmount()
 })
 
-test('the slider can be hidden while the name stays', async ($, on) => {
+test('the slider and the model name show and hide together', async ($, on) => {
   engine(on)
   on('session.surfaces', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
-  await run($, 'slider off')
-  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect(await band.find({ key: 'model-track' })).toBeUndefined()
-  expect(await band.find({ key: 'model-chip' })).toBeDefined()
-  await band.unmount()
+  const band = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    const shown = [await ui.find({ key: 'model-track' }), await ui.find({ key: 'model-chip' })].map(Boolean)
+    await ui.unmount()
+    return shown
+  }
+  expect(await band()).toEqual([true, true])
+  expect((await run($, 'slider off')).text).toMatch(/slider and name\) off/)
+  expect(await band()).toEqual([false, false])
+  await run($, 'models on')
+  expect(await band()).toEqual([true, true])
+})
+
+test('size L keeps its scale in a medium band by dropping detail first', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(95_000, 57))
+  await run($, 'size l')
+  const source = async (columns: number) => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: columns } })
+    const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
+    await ui.unmount()
+    return svg
+  }
+  const wide = await source(260)
+  expect(wide).toMatch(/scale\(1\.36\)/)
+  expect(wide).toMatch(/95k \/ 200k/)
+  for (const columns of [160, 140]) {
+    const svg = await source(columns)
+    expect(svg).toMatch(/scale\(1\.36\)/)
+    expect(svg).not.toMatch(/95k \/ 200k/)
+  }
 })
 
 test('the Terminal look keeps the band on one line at any width', async ($, on) => {

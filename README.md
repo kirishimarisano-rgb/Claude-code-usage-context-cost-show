@@ -14,7 +14,7 @@
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
-- **模型切換**：細條上一個可拖的膠囊滑塊（Claude 橘色填到目前檔位、白色圓鈕；可在設定頁單獨隱藏）加模型名稱；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
+- **模型切換**：細條上一個可拖的膠囊滑塊（Claude 橘色填到目前檔位、白色圓鈕）加模型名稱，兩者一起顯示或一起隱藏；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
 - **時間軸**：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片（可在設定頁關閉）。細條上的 ≡ 打開 **History** 視窗：每則訊息的時間、你說了什麼、Claude 做了什麼（各取開頭，不花 token），可篩選，點一下跳回那段對話；AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
 - **Claude 服務狀態**：細條上的 ◉ 在細條內展開 claude.ai、API、Claude Code 等服務的狀態與進行中的事件；只有按 ↻ Refresh 才會查詢 status.claude.com。
 - **You should know**：Anthropic 內建的側邊 agent（`cc-plugin-you-should-know@builtin`），可在設定頁一鍵開關。
@@ -57,17 +57,16 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge wrap 7d 95\|on\|off` | 週額度的自動收尾 |
 | `/gauge compact 70\|remind\|auto\|off` | context 到幾 % 時提醒或自動 /compact |
 | `/gauge look classic\|minimal\|terminal` | 顯示風格：Classic（深綠/深黃/深紅，預設）、Minimal（低飽和）、Terminal（最原本的文字進度條，Desktop 也用文字畫） |
-| `/gauge size s\|m\|l` | 文字大小（預設 M） |
+| `/gauge size s\|m\|l` | 文字大小（預設 M；只對 Classic、Minimal 有效，空間不夠時先精簡內容再縮小） |
 | `/gauge model` | 打開模型選擇器（在細條內） |
 | `/gauge model 1-5` | 切到第幾格 |
-| `/gauge models on\|off` | 顯示或隱藏模型標籤 |
+| `/gauge models on\|off` | 顯示或隱藏模型控制（滑塊與名稱一起） |
 | `/gauge max on\|off` | 你是 Max 方案（解鎖 Fable） |
 | `/gauge fast` | 切換 Fast mode |
 | `/gauge style [名稱]` | 下一個輸出風格，或指定一個 |
 | `/gauge ysk on\|off` | You should know 側邊 agent |
 | `/gauge history` | History 視窗 |
 | `/gauge status` | 查一次 Claude 服務狀態 |
-| `/gauge slider on\|off` | 顯示或隱藏模型滑塊 |
 | `/gauge summary on\|off` | 時間軸的 AI 摘要（會用 token） |
 | `/gauge marks on\|off` | 訊息上的時間軸色線 |
 | `/gauge footer auto\|on\|off` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |

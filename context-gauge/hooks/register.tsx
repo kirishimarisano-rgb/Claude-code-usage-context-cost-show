@@ -12,7 +12,7 @@ import type {
   Timer,
 } from 'claude-code'
 
-import { alt, PALETTE, pill, readings, setTheme, stack, strip } from './svg'
+import { alt, PALETTE, pill, readings, SCALE, setTheme, stack, strip } from './svg'
 import type {
   CompactMode,
   Current,
@@ -49,7 +49,6 @@ const DEFAULTS: GaugeSettings = {
   models: {
     isShown: true,
     hasMax: false,
-    isTrack: true,
     slots: [
       { model: 'sonnet', effort: 'low' },
       { model: 'sonnet', effort: 'high' },
@@ -629,7 +628,7 @@ const COMMANDS = [
   '/gauge size s|m|l          text size',
   '/gauge model 1-5           switch to a slider position',
   '/gauge model               the model picker',
-  '/gauge models on|off       show or hide the model chip',
+  '/gauge models on|off       show or hide the model control (slider and name)',
   '/gauge max on|off          you have a Max plan (unlocks Fable)',
   '/gauge fast                toggle fast mode',
   '/gauge style [name]        next output style, or one by name',
@@ -637,7 +636,6 @@ const COMMANDS = [
   '/gauge history             what you asked and what Claude did, per prompt',
   '/gauge summary on|off      AI summaries on the timeline (uses tokens)',
   '/gauge marks on|off        timeline marks on your messages',
-  '/gauge slider on|off       the draggable model slider',
   '/gauge status              Claude service status (checks status.claude.com)',
 ].join('\n')
 
@@ -745,9 +743,9 @@ export const register: Register = on => {
       later($, () => applySlot($, i))
       return { text: `Switching to ${slotLabel(slot)}.` }
     }
-    if (sub === 'models' && (a === 'on' || a === 'off')) {
+    if ((sub === 'models' || sub === 'slider') && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, models: { ...x.models, isShown: a === 'on' } }))
-      return { text: `Model chip ${a}.` }
+      return { text: `Model control (slider and name) ${a}.` }
     }
     if (sub === 'max' && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, models: { ...x.models, hasMax: a === 'on' } }))
@@ -769,10 +767,6 @@ export const register: Register = on => {
     if (sub === 'marks' && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isMarked: a === 'on' } }))
       return { text: `Timeline marks on messages: ${a}.` }
-    }
-    if (sub === 'slider' && (a === 'on' || a === 'off')) {
-      await changeSettings($, x => ({ ...x, models: { ...x.models, isTrack: a === 'on' } }))
-      return { text: `Model slider: ${a}.` }
     }
     if (sub === 'status') {
       await refreshStatus($)
@@ -1012,7 +1006,7 @@ export const register: Register = on => {
     // What the SVG line may take: the band's cells less the controls beside
     // it, at a conservative 8px a cell (a desktop UI font's cell is ~7-8px).
     const controlCells =
-      (chip ? ((await read($, settings)).models.isTrack ? 24 : 0) + 2 + (await chipNameLength($)) + 2 : 0) +
+      (chip ? 24 + 2 + (await chipNameLength($)) + 2 : 0) +
       8
     // Buttons take a little more than their cells on desktop (padding), so
     // leave room to spare; the meters shrink and clip, the controls never do.
@@ -1354,8 +1348,7 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   const models = (
     <Box flexDirection="column">
       {head('Model picker', 'A chip above the prompt opens it. Click a part of a position to change it.')}
-      {row('Show slider', toggle('track-shown', s.models.isTrack, () => changeSettings($, x => ({ ...x, models: { ...x.models, isTrack: !x.models.isTrack } }))), <Text dimColor>the draggable track; the name stays</Text>)}
-      {row('Show chip', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))))}
+      {row('Model control', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))), <Text dimColor>the slider and the model name, together</Text>)}
       {s.models.slots.map((slot, i) =>
         row(
           `Position ${i + 1}`,
@@ -1417,11 +1410,12 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
       {head('Display', 'Classic: deep solid colors. Minimal: quiet tones. Terminal: the text bars, everywhere.')}
       {row('Style', <Button key="look-style" label={STYLE_LABEL[s.look.style]} onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, style: nextStyle[x.look.style] } }))} />)}
       {row(
-        'Text size',
+        s.look.style === 'terminal' ? 'Text size *' : 'Text size',
         <Button key="look-size-down" label="−" plain dimColor onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, -1) } }))} />,
         <Text> {s.look.size.toUpperCase()} </Text>,
         <Button key="look-size-up" label="+" plain dimColor onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, 1) } }))} />,
       )}
+      {s.look.style === 'terminal' && <Text dimColor>* Text size applies to Classic and Minimal; Terminal draws in the app's own text.</Text>}
       {row('Answer line', <Button key="footer-mode" label={FOOTER_LABEL[s.footer]} dimColor={s.footer === 'off'} onPress={() => changeSettings($, x => ({ ...x, footer: nextFooter[x.footer] }))} />)}
     </Box>
   )
@@ -1452,7 +1446,7 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   const n = s.models.slots.length
   return (
     <Box flexDirection="row" gap={1} flexShrink={0}>
-      {Client && s.models.isTrack && (
+      {Client && (
         <Client
           key="model-track"
           module="./slider.tsx"
@@ -1505,7 +1499,7 @@ async function drawInlinePicker($: EngineInterface, e: RenderInput<'AbovePrompt'
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.rule} paddingX={1}>
       <Box flexDirection="row" gap={2} alignItems="center">
-        {Svg && <Svg source={pill(slots.length, at, locked, CLAUDE, 0.5)} alt={`position ${at === null ? 'none' : at + 1}`} />}
+        {Svg && <Svg source={pill(slots.length, at, locked, CLAUDE, 0.5 * SCALE[s.look.size])} alt={`position ${at === null ? 'none' : at + 1}`} />}
         {slots.map((x, i) => (
           <Button
             key={`pick-${i}`}

@@ -1,5 +1,11 @@
 # Changelog
 
+## context-gauge 1.0.2
+
+- The model slider and the model name are one control: shown together or hidden together (`/gauge models on|off`; `/gauge slider` does the same).
+- Text size holds when room is short: the meters drop their notes, the cost, then the weekly window before they scale down. The picker's pill follows the size too.
+- Settings say that text size applies to Classic and Minimal (Terminal draws in the app's own text).
+
 ## context-gauge 1.0.1
 
 - The band's controls (model, status, History, settings ⚙) never get pushed out: the meters take the room left and shrink or clip, and leave space for Desktop's button padding.

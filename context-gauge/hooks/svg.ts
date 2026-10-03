@@ -138,15 +138,23 @@ const svg = (w: number, h: number, scale: number, s: LookStyle, body: string) =>
 // One line for the band, fitted to `maxWidth` CSS pixels when given: the notes
 // go first, then the cost, then the whole line scales down (to 80% at least).
 export function strip(rs: Reading[], usd: number | undefined, look: Look, maxWidth?: number): string {
+  // Keep the chosen text size as long as anything fits: the notes go, then the
+  // cost, then the weekly window; only then does the line scale down.
   const scale = SCALE[look.size]
-  const tries: [boolean, boolean][] = [[true, true], [false, true], [false, false]]
+  const short = rs.filter(r => r.key !== 'seven_day')
+  const tries: [Reading[], boolean, boolean][] = [
+    [rs, true, true],
+    [rs, false, true],
+    [rs, false, false],
+    [short, false, false],
+  ]
   let line = ''
   let width = 0
-  for (const [hasNotes, hasCost] of tries) {
-    ;[line, width] = stripAt(rs, hasCost ? usd : undefined, look, hasNotes)
+  for (const [list, hasNotes, hasCost] of tries) {
+    ;[line, width] = stripAt(list, hasCost ? usd : undefined, look, hasNotes)
     if (maxWidth === undefined || width * scale <= maxWidth) return svg(width, 16, scale, look.style, line)
   }
-  return svg(width, 16, Math.max(scale * 0.8, maxWidth! / width), look.style, line)
+  return svg(width, 16, Math.max(0.8, maxWidth! / width), look.style, line)
 }
 
 function stripAt(rs: Reading[], usd: number | undefined, look: Look, hasNotes: boolean): [string, number] {
