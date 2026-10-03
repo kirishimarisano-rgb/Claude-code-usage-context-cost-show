@@ -1,5 +1,9 @@
 # Changelog
 
+## context-gauge 1.1.1
+
+- The usage check shows only the 5-hour, weekly and per-model weekly windows. The answer also carries internal entries (such as `iguana_necktie` at 100%) that are not limits on you; they no longer appear in the band.
+
 ## context-gauge 1.1.0
 
 - Usage any time: the 5-hour and weekly windows (and per-model weekly ones such as 7d Opus, where the plan has them) are read from Anthropic when the session starts, on ◉ → ↻ Refresh, and on `/gauge usage`, at most once a minute, with Claude Code's own login held by the host. A reply without limit data no longer clears them. The start check can be turned off in settings.

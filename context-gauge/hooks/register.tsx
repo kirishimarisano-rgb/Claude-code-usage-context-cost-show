@@ -576,6 +576,8 @@ let usageAskedAt = 0
 // Asks Anthropic for the account's limit windows (what /usage shows) with the
 // session's own login, held by the host: the plugin sees a handle, never the
 // token, and the host only sends it to Anthropic. At most once a minute.
+const USAGE_KINDS = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet']
+
 async function checkUsage($: EngineInterface) {
   const now = await $.clock.now()
   if (now - usageAskedAt < USAGE_EVERY_MS) return
@@ -590,9 +592,11 @@ async function checkUsage($: EngineInterface) {
     if (!r.ok) return void (await fail(`HTTP ${r.status}`))
     const d = JSON.parse(r.text) as Record<string, unknown>
     const limits: Limit[] = []
-    for (const [kind, v] of Object.entries(d)) {
-      const w = v as { utilization?: unknown; resets_at?: unknown } | null
-      if (!w || typeof w !== 'object' || typeof w.utilization !== 'number' || !/^[a-z0-9_]{1,40}$/.test(kind)) continue
+    // Only the windows /usage names; the answer also carries internal entries
+    // (codenames at 100%) that are not limits on you.
+    for (const kind of USAGE_KINDS) {
+      const w = d[kind] as { utilization?: unknown; resets_at?: unknown } | null | undefined
+      if (!w || typeof w !== 'object' || typeof w.utilization !== 'number') continue
       limits.push({
         kind,
         percent: Math.round(Math.max(0, w.utilization) * 10) / 10,

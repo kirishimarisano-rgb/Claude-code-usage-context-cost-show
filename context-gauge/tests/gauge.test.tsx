@@ -741,6 +741,7 @@ test('/gauge usage asks Anthropic for the limit windows with the session login',
       seven_day_opus: { utilization: 12 },
       extra_usage: null,
       'bad key!': { utilization: 5 },
+      iguana_necktie: { utilization: 100 },
     }),
   }
   const text = (await run($, 'usage')).text
@@ -749,6 +750,7 @@ test('/gauge usage asks Anthropic for the limit windows with the session login',
   expect(text).toMatch(/7d 96%/)
   expect(text).toMatch(/7d Opus 12%/)
   expect(text).not.toMatch(/bad key/)
+  expect(text).not.toMatch(/iguana/)
 
   // A reply that carries no limit windows keeps the ones just read.
   await measured($, { ...measure(60_000, 0), rateLimits: [] })
