@@ -1014,13 +1014,15 @@ export const register: Register = on => {
     const controlCells =
       (chip ? ((await read($, settings)).models.isTrack ? 24 : 0) + 2 + (await chipNameLength($)) + 2 : 0) +
       8
-    const meterCells = Math.max(20, e.props.bodyColumns - controlCells - 2)
-    const stripRoom = meterCells * 8
+    // Buttons take a little more than their cells on desktop (padding), so
+    // leave room to spare; the meters shrink and clip, the controls never do.
+    const meterCells = Math.max(16, e.props.bodyColumns - controlCells - 10)
+    const stripRoom = meterCells * 6.5
 
     const meterRow =
       m && drawn && Svg ? (
         <Box flexDirection="row" alignItems="center" gap={2}>
-          <Box width={meterCells} flexShrink={0}>
+          <Box flexGrow={1} flexShrink={1} minWidth={10} overflow="hidden">
             <Svg source={strip(drawn, m.usd, look, stripRoom)} alt={alt(drawn, m.usd)} />
           </Box>
           <Box flexDirection="row" alignItems="center" gap={2} flexShrink={0}>
@@ -1032,7 +1034,7 @@ export const register: Register = on => {
       ) : (
         m && (
           <Box flexDirection="row" gap={1}>
-            <Box width={meterCells} flexShrink={0} flexDirection="row" overflow="hidden">
+            <Box flexGrow={1} flexShrink={1} minWidth={10} flexDirection="row" overflow="hidden">
               {(() => {
                 const fit = fitTextBand(m, ctx, now, meterCells)
                 const [c1, c2] = bar(ctx, fit.ctxBar)

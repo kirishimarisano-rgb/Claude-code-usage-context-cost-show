@@ -671,3 +671,24 @@ test('a hand-edited position with a malformed model id never reaches /model', as
   expect(ran).toEqual([])
   expect(toasts.some(t => /invalid model or effort/.test(t))).toBe(true)
 })
+
+test('the settings gear and the other controls are drawn at every width and look', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(95_000, 57))
+  for (const look of ['classic', 'minimal', 'terminal']) {
+    await run($, `look ${look}`)
+    for (const columns of [220, 140, 100, 70, 50]) {
+      for (const surface of ['desktop', 'terminal'] as const) {
+        const ui = await $.ui.mount({ ...BAND, surface, props: { ...BAND.props, bodyColumns: columns } })
+        for (const key of ['settings', 'history', 'status', 'model-chip']) {
+          expect(await ui.find({ key })).toBeDefined()
+        }
+        // The controls' box never shrinks; the meters' box does.
+        const controls = await ui.findAll({ type: 'Box' })
+        expect(controls.some(b => b.props.flexShrink === 0)).toBe(true)
+        await ui.unmount()
+      }
+    }
+  }
+})

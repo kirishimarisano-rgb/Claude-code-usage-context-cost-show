@@ -1,5 +1,9 @@
 # Changelog
 
+## context-gauge 1.0.1
+
+- The band's controls (model, status, History, settings ⚙) never get pushed out: the meters take the room left and shrink or clip, and leave space for Desktop's button padding.
+
 ## context-gauge 1.0.0
 
 First public release.
