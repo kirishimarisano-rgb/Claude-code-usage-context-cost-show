@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type {
   ClientProps,
   ElementConstructor,
+  InputProps,
   EngineInterface,
   Register,
   RenderChildren,
@@ -56,7 +57,7 @@ const DEFAULTS: GaugeSettings = {
       { model: 'fable', effort: 'high' },
     ],
   },
-  timeline: { isAiSummary: false },
+  timeline: { isAiSummary: false, isMarked: true, isStrip: true },
 }
 
 const meter = atom({ plugin: 'context-gauge', key: 'meter' } as const, null)
@@ -77,6 +78,7 @@ const current = atom({ plugin: 'context-gauge', key: 'current' } as const, {
 } as Current)
 const timeline = atom({ plugin: 'context-gauge', key: 'timeline' } as const, [] as Entry[])
 const settingsTab = atom({ plugin: 'context-gauge', key: 'settingsTab' } as const, 'usage' as SettingsTab)
+const isPickerOpen = atom({ plugin: 'context-gauge', key: 'isPickerOpen' } as const, false)
 
 const WRAP_DELAY_MS = 10_000
 const NOTIFY_AFTER_MS = 20_000
@@ -339,16 +341,32 @@ async function checkCompact($: EngineInterface) {
 
 // ---------- models and modes ----------
 
-const MODEL_CHOICES = ['haiku', 'sonnet', 'opus', 'fable', 'sonnet[1m]', 'opus[1m]', 'fable[1m]']
+// Aliases follow the newest version; full ids pin one. Any other id can be typed in settings.
+const MODEL_CHOICES = [
+  'sonnet',
+  'opus',
+  'haiku',
+  'fable',
+  'sonnet[1m]',
+  'opus[1m]',
+  'fable[1m]',
+  'claude-sonnet-5-5',
+  'claude-opus-5-5',
+  'claude-haiku-4-5',
+  'claude-fable-5-1',
+]
 const EFFORTS: EffortName[] = ['low', 'medium', 'high', 'xhigh', 'max']
 const EFFORT_SHORT: Record<EffortName, string> = { low: 'low', medium: 'med', high: 'high', xhigh: 'xhigh', max: 'max' }
 
 const modelLabel = (m: string) => {
+  const one = m.endsWith('[1m]') ? ' 1M' : ''
   const base = m.replace('[1m]', '')
-  return base.charAt(0).toUpperCase() + base.slice(1) + (m.endsWith('[1m]') ? ' 1M' : '')
+  const pinned = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(base)
+  const name = pinned ? `${pinned[1]} ${pinned[2]}.${pinned[3]}` : base
+  return name.charAt(0).toUpperCase() + name.slice(1) + one
 }
 const slotLabel = (slot: Slot) => `${modelLabel(slot.model)} ${EFFORT_SHORT[slot.effort]}`
-const isLocked = (slot: Slot, prefs: ModelPrefs) => slot.model.startsWith('fable') && !prefs.hasMax
+const isLocked = (slot: Slot, prefs: ModelPrefs) => /fable/i.test(slot.model) && !prefs.hasMax
 
 // A request's model id ('claude-opus-5-5') to the family a slot names ('opus').
 const familyOf = (id?: string) =>
@@ -363,7 +381,7 @@ const familyOf = (id?: string) =>
 function activeSlot(c: Current, prefs: ModelPrefs) {
   if (c.slot !== null) return c.slot
   const family = familyOf(c.model)
-  const i = prefs.slots.findIndex(x => x.model.replace('[1m]', '') === family && x.effort === c.effort)
+  const i = prefs.slots.findIndex(x => familyOf(x.model) === family && x.effort === c.effort)
   return i === -1 ? null : i
 }
 
@@ -385,6 +403,7 @@ async function applySlot($: EngineInterface, i: number) {
     await $.command.run({ command: 'model', args: slot.model })
     await $.command.run({ command: 'effort', args: slot.effort })
     await update($, current, c => ({ ...c, slot: i, model: slot.model, effort: slot.effort }))
+    await update($, isPickerOpen, () => false)
     $.ui.toast(`→ ${slotLabel(slot)}`)
   } catch (error) {
     $.ui.toast(`Could not switch to ${slotLabel(slot)} (${String(error).slice(0, 80)})`, { timeoutMs: 7000 })
@@ -532,7 +551,15 @@ const COMMANDS = [
   '/gauge ysk on|off          the You should know side agent',
   '/gauge timeline            the session timeline',
   '/gauge summary on|off      AI summaries on the timeline (uses tokens)',
+  '/gauge marks on|off        timeline marks on your messages',
+  '/gauge strip on|off        timeline strip above the prompt',
 ].join('\n')
+
+async function onSlide($: EngineInterface, e: { data: unknown }) {
+  const slot = (e.data as { slot?: unknown } | null)?.slot
+  if (typeof slot === 'number') later($, () => applySlot($, slot))
+  return {}
+}
 
 // ---------- hooks ----------
 
@@ -553,12 +580,10 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The model slider's Client posts the position the person let go on.
-  on('ui.message', { element: 'model-slider' }, async ($, e) => {
-    const slot = (e.data as { slot?: unknown } | null)?.slot
-    if (typeof slot === 'number') later($, () => applySlot($, slot))
-    return {}
-  })
+  // The model sliders' Clients (the band's track, the picker's) post the
+  // position the person let go on.
+  on('ui.message', { element: 'model-slider' }, onSlide)
+  on('ui.message', { element: 'model-track' }, onSlide)
 
   on('command.run', { command: 'gauge' }, async ($, e) => {
     const [sub, a, b] = e.args.trim().toLowerCase().split(/\s+/)
@@ -598,14 +623,13 @@ export const register: Register = on => {
       return { text: `Text size: ${a.toUpperCase()}.` }
     }
     if (sub === 'model' && a === undefined) {
-      const opened = await openPicker($)
+      await update($, isPickerOpen, () => true)
       const s = await read($, settings)
       const c = await read($, current)
       const at = activeSlot(c, s.models)
       return {
-        text: opened.isPlaced
-          ? 'Model picker opened.'
-          : s.models.slots.map((x, i) => `${i === at ? '●' : '○'} ${i + 1} ${slotLabel(x)}${isLocked(x, s.models) ? ' (Max)' : ''}`).join('\n') +
+        text:
+          s.models.slots.map((x, i) => `${i === at ? '●' : '○'} ${i + 1} ${slotLabel(x)}${isLocked(x, s.models) ? ' (Max)' : ''}`).join('\n') +
             '\nUse /gauge model 1-5.',
       }
     }
@@ -634,8 +658,13 @@ export const register: Register = on => {
       return { text: `Turning You should know ${a}.` }
     }
     if (sub === 'summary' && (a === 'on' || a === 'off')) {
-      await changeSettings($, x => ({ ...x, timeline: { isAiSummary: a === 'on' } }))
+      await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isAiSummary: a === 'on' } }))
       return { text: `AI summaries on the timeline: ${a}.` }
+    }
+    if ((sub === 'marks' || sub === 'strip') && (a === 'on' || a === 'off')) {
+      const key = sub === 'marks' ? 'isMarked' : 'isStrip'
+      await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, [key]: a === 'on' } }))
+      return { text: `Timeline ${sub === 'marks' ? 'marks on messages' : 'strip'}: ${a}.` }
     }
     if (sub === 'timeline') {
       const opened = await openTimeline($)
@@ -737,7 +766,7 @@ export const register: Register = on => {
     const prefs = (await read($, settings)).models
     await update($, current, c => {
       const slot = c.slot === null ? undefined : prefs.slots[c.slot]
-      const isSame = slot && slot.model.replace('[1m]', '') === familyOf(e.model)
+      const isSame = slot && familyOf(slot.model) === familyOf(e.model)
       return { ...c, model: e.model, effort: e.effort === undefined ? c.effort : String(e.effort), slot: isSame ? c.slot : null }
     })
     await shift($, 'waiting')
@@ -859,12 +888,14 @@ export const register: Register = on => {
 
     const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
     const chip = await drawChip($, e)
+    const strip_ = await drawStrip($, e)
 
     const meterRow =
       m && drawn && Svg ? (
         <Box flexDirection="row" alignItems="center" gap={2}>
           <Svg source={strip(drawn, m.usd, look)} alt={alt(drawn, m.usd)} />
           {chip}
+          {strip_.ticks}
           {gear}
         </Box>
       ) : (
@@ -915,6 +946,8 @@ export const register: Register = on => {
             <Text> </Text>
             {chip}
             <Text> </Text>
+            {strip_.ticks}
+            <Text> </Text>
             {gear}
           </Box>
         )
@@ -953,11 +986,38 @@ export const register: Register = on => {
       </Box>
     )
 
+    const picker = await drawInlinePicker($, e)
+
     return (
       <Box flexDirection="column">
         {wrapRow}
         {meterRow}
+        {picker}
         {liveRow}
+        {strip_.cards}
+      </Box>
+    )
+  })
+
+  // A mark on each of your messages: its status as a colored rule, and on
+  // hover a card with how it went. Off in settings, or ctrl+o, draws the row as is.
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    if (e.props.isExpanded || e.props.origin.kind !== 'composer') return next(e)
+    if (!(await read($, settings)).timeline.isMarked) return next(e)
+    const list = await read($, timeline)
+    const head = e.props.text.replace(/\s+/g, ' ').trim().slice(0, 40)
+    const x = list.find(y => y.id === e.requestId) ?? [...list].reverse().find(y => head !== '' && y.text.startsWith(head))
+    if (!x) return next(e)
+    await lookOf($)
+    const { Box, Text } = $.ui.resolve(e)
+    const now = await $.clock.now()
+    return (
+      <Box key={`mark-${e.requestId}`} flexDirection="row">
+        <Text color={statusColor(x)}>▍ </Text>
+        <Text>{e.props.text}</Text>
+        <Box position="absolute" top={-3} left={2} display="none" hover={{ display: 'flex' }} borderStyle="round" borderColor={statusColor(x)} paddingX={1}>
+          <Text wrap="truncate">{entryCard(x, now)}</Text>
+        </Box>
       </Box>
     )
   })
@@ -1056,6 +1116,7 @@ async function settingsText($: EngineInterface) {
 
 async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
+  const Input = e.surface === 'mobile' ? undefined : ($.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }).Input
   await lookOf($)
   const s = await read($, settings)
   const c = await read($, current)
@@ -1158,6 +1219,21 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
           isLocked(slot, s.models) ? <Text color={C.warn}>Max only</Text> : null,
         ),
       )}
+      {Input && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>Or type any model id for a position, as /model takes it (e.g. claude-opus-5-5):</Text>
+          <Box flexDirection="row" gap={1}>
+            {s.models.slots.map((slot, i) => (
+              <Input
+                key={`slot-${i}-custom`}
+                placeholder={`${i + 1}: ${slot.model}`}
+                submitLabel="Set"
+                onSubmit={value => void (value.trim() && setSlot(i, { model: value.trim() }))}
+              />
+            ))}
+          </Box>
+        </Box>
+      )}
       {row(
         'Max plan',
         toggle('has-max', s.models.hasMax, () => changeSettings($, x => ({ ...x, models: { ...x.models, hasMax: !x.models.hasMax } }))),
@@ -1177,10 +1253,12 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   const timelineTab = (
     <Box flexDirection="column">
       {head('Timeline', 'One line per prompt: green done, red failed, amber stopped. Click a line to jump back.')}
-      {row('Open', <Button key="timeline-open" label="Timeline" dimColor onPress={() => openTimeline($)} />)}
+      {row('On messages', toggle('marks-toggle', s.timeline.isMarked, () => changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isMarked: !x.timeline.isMarked } }))), <Text dimColor>a colored rule on each message; hover for a card</Text>)}
+      {row('Strip', toggle('strip-toggle', s.timeline.isStrip, () => changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isStrip: !x.timeline.isStrip } }))), <Text dimColor>a tick per prompt above the prompt</Text>)}
+      {row('Side panel', <Button key="timeline-open" label="Open" dimColor onPress={() => openTimeline($)} />)}
       {row(
         'AI summaries',
-        toggle('summary-toggle', s.timeline.isAiSummary, () => changeSettings($, x => ({ ...x, timeline: { isAiSummary: !x.timeline.isAiSummary } }))),
+        toggle('summary-toggle', s.timeline.isAiSummary, () => changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isAiSummary: !x.timeline.isAiSummary } }))),
         <Text dimColor>one Haiku call per prompt (uses tokens)</Text>,
       )}
     </Box>
@@ -1208,16 +1286,124 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   )
 }
 
-// The band's one model control: the position in use, a press opens the picker.
+// The band's model control: a small track to drag, and the name, which opens
+// the picker inside the band.
 async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   const s = await read($, settings)
   if (!s.models.isShown) return null
   const c = await read($, current)
-  const { Button } = $.ui.resolve(e)
+  const isOpen = await read($, isPickerOpen)
+  const { Box, Button } = $.ui.resolve(e)
+  const Client =
+    e.surface === 'terminal' || e.surface === 'desktop'
+      ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client
+      : undefined
   const at = activeSlot(c, s.models)
   const slot = at === null ? undefined : s.models.slots[at]
   const name = slot ? slotLabel(slot) : c.model ? modelLabel(familyOf(c.model) ?? c.model) : 'Model'
-  return <Button key="model-chip" label={`${c.fast ? '⚡ ' : ''}${name} ›`} plain dimColor onPress={() => openPicker($)} />
+  const n = s.models.slots.length
+  return (
+    <Box flexDirection="row" gap={1}>
+      {Client && (
+        <Client
+          key="model-track"
+          module="./slider.tsx"
+          props={{ labels: s.models.slots.map(slotLabel), locked: s.models.slots.map(x => isLocked(x, s.models)), active: at, accent: CLAUDE, compact: true }}
+          width={(n - 1) * 3 + 1}
+        />
+      )}
+      <Button
+        key="model-chip"
+        label={`${c.fast ? '⚡ ' : ''}${name} ${isOpen ? '⌄' : '›'}`}
+        plain
+        dimColor={!isOpen}
+        onPress={() => update($, isPickerOpen, x => !x)}
+      />
+    </Box>
+  )
+}
+
+// Claude's own orange: the model controls wear it in every look.
+const CLAUDE = '#c96442'
+
+// The picker as a few rows inside the band: the pill (a picture on desktop and
+// mobile), a press per position, fast mode, output style, close.
+async function drawInlinePicker($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
+  if (!(await read($, isPickerOpen))) return null
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const s = await read($, settings)
+  const c = await read($, current)
+  const at = activeSlot(c, s.models)
+  const slots = s.models.slots
+  const locked = slots.map(x => isLocked(x, s.models))
+  const Svg = e.surface === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={C.rule} paddingX={1}>
+      <Box flexDirection="row" gap={2} alignItems="center">
+        {Svg && <Svg source={pill(slots.length, at, locked, CLAUDE, 0.5)} alt={`position ${at === null ? 'none' : at + 1}`} />}
+        {slots.map((x, i) => (
+          <Button
+            key={`pick-${i}`}
+            label={`${locked[i] ? '⊘ ' : ''}${slotLabel(x)}`}
+            plain
+            dimColor={i !== at}
+            onPress={() => applySlot($, i)}
+          />
+        ))}
+      </Box>
+      <Box flexDirection="row" gap={2}>
+        <Button key="picker-fast" label={c.fast ? '⚡ Fast on' : '⚡ Fast'} plain dimColor={!c.fast} onPress={() => toggleFast($)} />
+        <Button key="picker-style" label={`Style: ${c.outputStyle ?? 'default'}`} plain dimColor onPress={() => void setStyle($).then(t => $.ui.toast(t))} />
+        <Button key="picker-settings" label="Edit positions" plain dimColor onPress={() => update($, settingsTab, () => 'models').then(() => openSettings($))} />
+        <Button key="picker-close" label="✕" plain dimColor onPress={() => update($, isPickerOpen, () => false)} />
+      </Box>
+    </Box>
+  )
+}
+
+const statusColor = (x: Entry) => (x.status === 'ok' ? C.ok : x.status === 'error' ? C.hot : x.status === 'stopped' ? C.warn : C.accent)
+
+const entryCard = (x: Entry, now: number) =>
+  [
+    x.summary ?? (x.text.length > 48 ? `${x.text.slice(0, 48)}…` : x.text),
+    x.ms === null ? `running ${dur(now - x.at)}` : dur(x.ms),
+    x.tools ? `${x.tools} tools` : '',
+    x.errors ? `${x.errors} failed` : '',
+    x.files.slice(0, 3).join(', '),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+// The strip: a tick per prompt; hovering one shows its line in the band, a
+// press scrolls back to it.
+async function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
+  if (!(await read($, settings)).timeline.isStrip) return { ticks: null, cards: null }
+  const list = (await read($, timeline)).slice(-24)
+  if (!list.length) return { ticks: null, cards: null }
+  const { Box, Text } = $.ui.resolve(e)
+  const now = await $.clock.now()
+  const ticks = (
+    <Box flexDirection="row">
+      {list.map(x => (
+        <Text color={statusColor(x)} hover={{ scope: `tl-${x.id}`, bold: true }}>
+          ▮
+        </Text>
+      ))}
+    </Box>
+  )
+  const cards = (
+    <Box flexDirection="column">
+      {list.map(x => (
+        <Box display="none" hover={{ scope: `tl-${x.id}`, display: 'flex' }} flexDirection="row">
+          <Text color={statusColor(x)}>▍ </Text>
+          <Text dimColor wrap="truncate">
+            {clock(x.at)} {entryCard(x, now)}
+          </Text>
+        </Box>
+      ))}
+    </Box>
+  )
+  return { ticks, cards }
 }
 
 const PILL_FILL = '#e9b949'

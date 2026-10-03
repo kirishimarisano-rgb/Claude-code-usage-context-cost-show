@@ -9,14 +9,19 @@ type Props = {
   locked: boolean[]
   active: number | null
   accent: string
+  // A bare track for the band: a stop every three cells, no labels.
+  compact?: boolean
 }
+
+const STEP = 3
 
 type State = { drag: number | null }
 
 const Slider: ClientModule<Props, State> = (p, s) => {
   const { Box, Text } = s.elements
   const n = Math.max(1, p.labels.length)
-  const slotAt = (x: number) => Math.max(0, Math.min(n - 1, Math.floor(x / Math.max(1, s.columns / n))))
+  const slotAt = (x: number) =>
+    Math.max(0, Math.min(n - 1, p.compact ? Math.round(x / STEP) : Math.floor(x / Math.max(1, s.columns / n))))
 
   if (s.state === undefined) {
     s.setState({ drag: null })
@@ -37,6 +42,27 @@ const Slider: ClientModule<Props, State> = (p, s) => {
   }
 
   const shown = s.state?.drag ?? p.active
+
+  if (p.compact) {
+    // ●━━○──○──⊘ : filled up to the chosen stop in the accent, the rest dim.
+    return (
+      <Box flexDirection="row">
+        {p.labels.map((_, i) => {
+          const isOn = i === shown
+          const isBefore = shown !== null && shown !== undefined && i < shown
+          const stop = isOn ? '●' : p.locked[i] ? '⊘' : '○'
+          const rail = i === n - 1 ? '' : shown !== null && shown !== undefined && i < shown ? '━━' : '──'
+          return (
+            <Box flexDirection="row">
+              {isOn || isBefore ? <Text color={p.accent}>{stop}</Text> : <Text dimColor>{stop}</Text>}
+              {isBefore ? <Text color={p.accent}>{rail}</Text> : <Text dimColor>{rail}</Text>}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+  }
+
   const cell = Math.max(6, Math.floor((s.columns || n * 14) / n))
   return (
     <Box flexDirection="row">

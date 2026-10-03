@@ -199,7 +199,7 @@ export const alt = (rs: Reading[], usd: number | undefined) =>
 
 // The model picker's pill: a dark track, the chosen part filled, a dot per
 // position and a white knob on the chosen one.
-export function pill(n: number, active: number | null, locked: boolean[], fill: string): string {
+export function pill(n: number, active: number | null, locked: boolean[], fill: string, scale = 1): string {
   const W = 340
   const H = 52
   const pad = 6
@@ -221,5 +221,5 @@ export function pill(n: number, active: number | null, locked: boolean[], fill: 
     }
   }
   if (active !== null) parts.push(`<circle cx="${x(active).toFixed(1)}" cy="${H / 2}" r="${k - 2.5}" fill="#ffffff"/>`)
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(W * scale)}" height="${Math.round(H * scale)}" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`
 }

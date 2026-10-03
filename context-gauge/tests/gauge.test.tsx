@@ -347,10 +347,16 @@ test('the slider switches model and effort, and keeps Fable locked without Max',
   on('config.list', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
 
-  // The band keeps one small chip; the picker holds the positions.
+  // The band keeps a small track and the name; the name opens the picker inside the band.
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await band.find({ key: 'model-chip' })).toBeDefined()
-  expect(await band.find({ type: 'Client' })).toBeUndefined()
+  expect((await band.find({ type: 'Client' }))?.props.width).toBe(13)
+  expect(await band.find({ key: 'pick-0' })).toBeUndefined()
+  await band.press({ key: 'model-chip' })
+  expect(await band.find({ key: 'pick-0' })).toBeDefined()
+  expect(await band.find({ key: 'picker-fast' })).toBeDefined()
+  await band.press({ key: 'picker-close' })
+  expect(await band.find({ key: 'pick-0' })).toBeUndefined()
   await band.unmount()
   const picker = await $.ui.mount({ ...PICKER, surface: 'desktop' })
   expect(await picker.find({ type: 'Svg' })).toBeDefined()
@@ -431,31 +437,82 @@ test('each prompt becomes a timeline line, colored by how its turn ended', async
   await ui.unmount()
 })
 
-test('dragging the terminal slider across positions switches on release', async ($, on) => {
+test('dragging the band track across stops switches on release', async ($, on) => {
   const clock = engine(on)
   const ran = commands(on)
   on('session.surfaces', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
-  const ui = await $.ui.mount({ ...PICKER, surface: 'terminal' })
-  await ui.resize({ columns: 70, rows: 1 })
-  // Five positions over 70 cells: 14 each. Press on 1, drag to 4, let go.
-  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left' })
-  await ui.pointer({ type: 'move', x: 30, y: 0, button: 'left' })
-  await ui.pointer({ type: 'move', x: 45, y: 0, button: 'left' })
-  await ui.pointer({ type: 'up', x: 45, y: 0, button: 'left' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await ui.resize({ columns: 13, rows: 1 })
+  // The band's track: a stop every three cells. Press on 1, drag to 4, let go.
+  await ui.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
+  await ui.pointer({ type: 'move', x: 5, y: 0, button: 'left' })
+  await ui.pointer({ type: 'move', x: 9, y: 0, button: 'left' })
+  await ui.pointer({ type: 'up', x: 9, y: 0, button: 'left' })
   await clock.advance(1)
   expect(ran).toEqual(['/model opus', '/effort xhigh'])
   await ui.unmount()
 })
 
-test('a press on a position in the desktop picker switches', async ($, on) => {
+test('a press on a position in the band picker switches and closes it', async ($, on) => {
   const clock = engine(on)
   const ran = commands(on)
   on('session.surfaces', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
-  const ui = await $.ui.mount({ ...PICKER, surface: 'desktop' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await ui.press({ key: 'model-chip' })
   await ui.press({ key: 'pick-1' })
   await clock.advance(1)
   expect(ran).toEqual(['/model sonnet', '/effort high'])
+  expect(await ui.find({ key: 'pick-1' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the timeline marks messages and fills the strip', async ($, on) => {
+  engine(on)
+  // The engine's own row, drawn when the plugin passes.
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine row'] }) as never)
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  await measured($, measure(60_000, 10))
+  await $.turn.start({ text: 'fix the band layout', turnId: 'a' })
+  await $.turn.complete({ answer: 'done', durationMs: 4000, isAborted: false, turnId: 'a', reason: 'answer' })
+
+  const message = {
+    plugin: 'context-gauge',
+    component: 'UserMessage',
+    requestId: 'u-1',
+    props: { text: 'fix the band layout', origin: { kind: 'composer' }, isExpanded: false },
+  } as const
+  const ui = await $.ui.mount({ ...message, surface: 'desktop' } as never)
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('▍ ')
+  expect(texts).toContain('fix the band layout')
+  expect(texts.join('|')).toMatch(/fix the band layout · 4s/)
+  await ui.unmount()
+
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await band.findAll({ type: 'Text', text: '▮' })).length).toBe(1)
+  await band.unmount()
+
+  await run($, 'marks off')
+  const off = await $.ui.mount({ ...message, surface: 'desktop' } as never)
+  expect(await off.find({ type: 'Text', text: '▍ ' })).toBeUndefined()
+  await off.unmount()
+})
+
+test('positions can pin a model version', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(60_000, 10))
+  const row = {
+    plugin: 'context-gauge',
+    component: 'CommandOutput',
+    props: { command: 'gauge', args: 'settings', text: '', isErrored: false },
+  } as const
+  const ui = await $.ui.mount({ ...row, surface: 'desktop' })
+  await ui.press({ key: 'tab-models' })
+  await ui.input({ key: 'slot-1-custom', text: 'claude-opus-5-5' })
+  expect((await ui.find({ key: 'slot-1-model' }))?.text).toMatch(/Opus 5\.5/)
   await ui.unmount()
 })

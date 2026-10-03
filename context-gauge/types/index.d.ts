@@ -78,8 +78,12 @@ export type GaugeSettings = {
   footer: FooterMode
   look: Look
   models: ModelPrefs
-  timeline: { isAiSummary: boolean }
+  timeline: TimelinePrefs
 }
+
+// Where the timeline shows: a mark on each of your messages, a strip of ticks
+// above the prompt, and the AI one-line summaries (they cost tokens).
+export type TimelinePrefs = { isAiSummary: boolean; isMarked: boolean; isStrip: boolean }
 
 // What the session runs now, as the last request and this mod's switches saw it.
 export type Current = {
@@ -128,6 +132,7 @@ declare module 'claude-code' {
       current: Current
       timeline: Entry[]
       settingsTab: SettingsTab
+      isPickerOpen: boolean
     }
   }
 }

@@ -14,8 +14,8 @@ Desktop 和手機 app 畫一行高的 SVG 細條（上方是輸入框上的細�
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
-- **模型選擇器**：細條上只有一個小標籤（例如 `Sonnet low ›`），按下彈出選擇器：藥丸形滑塊顯示五個檔位，點一下切換「模型 + 思考強度」（終端可拖動），旁邊是 Fast mode 和輸出風格。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 檔位只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。標籤可在設定頁關閉。
-- **時間軸**：每次你發的訊息一條線，綠色完成、紅色出錯、黃色中止，附耗時、工具數、改過的檔案；點一下捲回那段對話。AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用到 token）。
+- **模型切換**：細條上一個可拖的小滑塊 `●━━○──○──○──⊘`（Claude 橘色）加模型名稱；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
+- **時間軸**（設定頁可各自開關）：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片：那句話的開頭、耗時、工具數、改過的檔案；細條上一排小刻度，滑鼠停上去在細條內顯示同樣的內容；也可另外打開側邊面板。AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
 - **You should know**：Anthropic 內建的側邊 agent（`cc-plugin-you-should-know@builtin`），可在設定頁一鍵開關。
 - **設定頁**：`/gauge settings`，或細條旁的 ⚙；分成 Usage / Models / Timeline / Display 四頁
 
@@ -57,7 +57,7 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge compact 70\|remind\|auto\|off` | context 到幾 % 時提醒或自動 /compact |
 | `/gauge look classic\|minimal\|terminal` | 顯示風格：Classic（深綠/深黃/深紅，預設）、Minimal（低飽和）、Terminal（最原本的文字進度條，Desktop 也用文字畫） |
 | `/gauge size s\|m\|l` | 文字大小（預設 M） |
-| `/gauge model` | 打開模型選擇器 |
+| `/gauge model` | 打開模型選擇器（在細條內） |
 | `/gauge model 1-5` | 切到第幾格 |
 | `/gauge models on\|off` | 顯示或隱藏模型標籤 |
 | `/gauge max on\|off` | 你是 Max 方案（解鎖 Fable） |
@@ -66,6 +66,8 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge ysk on\|off` | You should know 側邊 agent |
 | `/gauge timeline` | 時間軸 |
 | `/gauge summary on\|off` | 時間軸的 AI 摘要（會用 token） |
+| `/gauge marks on\|off` | 訊息上的時間軸色線 |
+| `/gauge strip on\|off` | 細條上的時間軸刻度 |
 | `/gauge footer auto\|on\|off` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |
 
 上方細條只在終端與 Claude Code Desktop 顯示，手機 app 不顯示。右側面板要在終端全螢幕、寬度 110 欄以上才會停靠在右側。雲端 session 沒有可以畫 mod 介面的客戶端，所以只能看 `/gauge` 的文字快照。
