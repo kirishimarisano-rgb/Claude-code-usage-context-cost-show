@@ -1,7 +1,6 @@
 // Small SVG meters for the surfaces that draw `Svg` (desktop, mobile, VS Code).
 // Pure string builders: no `$`, no state.
 
-import { INTER_500, INTER_600 } from './font'
 import type { Limit, Meter } from '../types'
 
 export type Reading = {
@@ -21,9 +20,7 @@ const toneOf = (ratio: number, warnAt: number, hotAt: number) =>
 
 const STYLE = `
   <style>
-    @font-face { font-family: GaugeInter; font-weight: 500; src: url(data:font/woff2;base64,${INTER_500}) format('woff2'); }
-    @font-face { font-family: GaugeInter; font-weight: 600; src: url(data:font/woff2;base64,${INTER_600}) format('woff2'); }
-    text { font-family: GaugeInter, "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif; font-feature-settings: "tnum"; font-weight: 500; text-rendering: geometricPrecision; }
+    text { font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-feature-settings: "tnum"; font-weight: 500; text-rendering: geometricPrecision; }
     .label { fill: #7a808b; font-size: 8px; letter-spacing: 0.8px; }
     .value { fill: #cfd2d8; font-size: 10.5px; font-weight: 600; }
     .sub { fill: #6c727d; font-size: 9.5px; }
