@@ -18,6 +18,8 @@ export type Tones = { ok: string; warn: string; hot: string }
 export const PALETTE: Record<LookStyle, Tones> = {
   classic: { ok: '#2f8a57', warn: '#c47f0e', hot: '#b8322a' },
   minimal: { ok: '#8aa892', warn: '#c8a66e', hot: '#c98585' },
+  // Drawn as text, not SVG; its tones are Classic's.
+  terminal: { ok: '#2f8a57', warn: '#c47f0e', hot: '#b8322a' },
 }
 
 export const SCALE: Record<Look['size'], number> = { s: 1, m: 1.18, l: 1.36 }
@@ -25,6 +27,7 @@ export const SCALE: Record<Look['size'], number> = { s: 1, m: 1.18, l: 1.36 }
 const LABELS: Record<LookStyle, Record<string, string>> = {
   classic: { ctx: 'Context', five_hour: '5h', seven_day: '7d', cost: 'Cost' },
   minimal: { ctx: 'CONTEXT', five_hour: '5 HOUR', seven_day: '7 DAY', cost: 'COST' },
+  terminal: { ctx: 'ctx', five_hour: '5h', seven_day: '7d', cost: 'cost' },
 }
 
 const FONT = `"Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif`
@@ -33,6 +36,7 @@ const FONT = `"Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSyste
 const TYPE: Record<LookStyle, { label: number; track: number; value: number; sub: number }> = {
   classic: { label: 10, track: 0, value: 11, sub: 10 },
   minimal: { label: 8, track: 0.8, value: 10.5, sub: 9.5 },
+  terminal: { label: 10, track: 0, value: 11, sub: 10 },
 }
 
 const style = (s: LookStyle) => {
@@ -41,11 +45,11 @@ const style = (s: LookStyle) => {
   return `
   <style>
     text { font-family: ${FONT}; font-feature-settings: "tnum"; font-weight: 500; text-rendering: geometricPrecision; }
-    .label { fill: ${s === 'classic' ? '#9ba1ab' : '#7a808b'}; font-size: ${t.label}px; letter-spacing: ${t.track}px; }
-    .value { fill: ${s === 'classic' ? '#e3e5e9' : '#cfd2d8'}; font-size: ${t.value}px; font-weight: 600; }
-    .sub { fill: ${s === 'classic' ? '#848a95' : '#6c727d'}; font-size: ${t.sub}px; }
-    .hot { fill: ${s === 'classic' ? '#d24a3e' : hot}; }
-    .track { fill: rgba(140, 146, 158, ${s === 'classic' ? 0.22 : 0.16}); }
+    .label { fill: ${s !== 'minimal' ? '#9ba1ab' : '#7a808b'}; font-size: ${t.label}px; letter-spacing: ${t.track}px; }
+    .value { fill: ${s !== 'minimal' ? '#e3e5e9' : '#cfd2d8'}; font-size: ${t.value}px; font-weight: 600; }
+    .sub { fill: ${s !== 'minimal' ? '#848a95' : '#6c727d'}; font-size: ${t.sub}px; }
+    .hot { fill: ${s !== 'minimal' ? '#d24a3e' : hot}; }
+    .track { fill: rgba(140, 146, 158, ${s !== 'minimal' ? 0.22 : 0.16}); }
     @media (prefers-color-scheme: light) {
       .value { fill: #23272e; }
       .label, .sub { fill: #646b76; }
@@ -131,8 +135,8 @@ export function strip(rs: Reading[], usd: number | undefined, look: Look): strin
   const s = look.style
   const t = TYPE[s]
   const tones = PALETTE[s]
-  const barW = s === 'classic' ? 34 : 28
-  const barH = s === 'classic' ? 3 : 2.5
+  const barW = s !== 'minimal' ? 34 : 28
+  const barH = s !== 'minimal' ? 3 : 2.5
   const mid = 12
   const gap = 18
   let x = 0
@@ -174,7 +178,7 @@ export function stack(rs: Reading[], width: number, look: Look): string {
   const scale = SCALE[look.size]
   const w = Math.max(160, Math.min(320, width / scale))
   const rowH = 27
-  const barH = s === 'classic' ? 3 : 2.5
+  const barH = s !== 'minimal' ? 3 : 2.5
   const parts = rs.map((r, i) => {
     const vw = advance(r.value, t.value) * 1.15
     return `

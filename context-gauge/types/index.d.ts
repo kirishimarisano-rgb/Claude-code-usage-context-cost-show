@@ -55,7 +55,7 @@ export type CompactMode = 'off' | 'remind' | 'auto'
 // One wrap-up rule: on or off, and the percent of its limit window it fires at.
 export type WrapRule = { isOn: boolean; at: number }
 
-export type LookStyle = 'classic' | 'minimal'
+export type LookStyle = 'classic' | 'minimal' | 'terminal'
 
 export type Look = { style: LookStyle; size: 's' | 'm' | 'l' }
 

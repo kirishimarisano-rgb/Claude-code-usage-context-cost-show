@@ -52,7 +52,7 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge wrap 5h 90\|on\|off` | 5 小時額度的自動收尾 |
 | `/gauge wrap 7d 95\|on\|off` | 週額度的自動收尾 |
 | `/gauge compact 70\|remind\|auto\|off` | context 到幾 % 時提醒或自動 /compact |
-| `/gauge look classic\|minimal` | 顯示風格：Classic（深綠/深黃/深紅，預設）或 Minimal（低飽和、小型大寫標籤） |
+| `/gauge look classic\|minimal\|terminal` | 顯示風格：Classic（深綠/深黃/深紅，預設）、Minimal（低飽和）、Terminal（最原本的文字進度條，Desktop 也用文字畫） |
 | `/gauge size s\|m\|l` | 文字大小（預設 M） |
 | `/gauge footer auto\|on\|off` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |
 

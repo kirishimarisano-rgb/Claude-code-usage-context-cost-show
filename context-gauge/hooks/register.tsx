@@ -39,7 +39,7 @@ const WRAP_PROMPT = [
 // The text palette follows the chosen look, in the same tones the SVG meters use.
 const paletteFor = (style: LookStyle) => ({
   ...PALETTE[style],
-  accent: style === 'classic' ? '#c96442' : '#a39bd6',
+  accent: style === 'minimal' ? '#a39bd6' : '#c96442',
   rule: '#4a4d55',
 })
 let C = paletteFor('classic')
@@ -108,15 +108,17 @@ const COMPACT_LABEL: Record<CompactMode, string> = { off: 'Off', remind: 'Remind
 const FOOTER_LABEL: Record<FooterMode, string> = { auto: 'Auto', on: 'On', off: 'Off' }
 const nextCompact: Record<CompactMode, CompactMode> = { off: 'remind', remind: 'auto', auto: 'off' }
 const nextFooter: Record<FooterMode, FooterMode> = { auto: 'on', on: 'off', off: 'auto' }
-const STYLE_LABEL: Record<LookStyle, string> = { classic: 'Classic', minimal: 'Minimal' }
+const STYLE_LABEL: Record<LookStyle, string> = { classic: 'Classic', minimal: 'Minimal', terminal: 'Terminal' }
+const nextStyle: Record<LookStyle, LookStyle> = { classic: 'minimal', minimal: 'terminal', terminal: 'classic' }
 const SIZES: Look['size'][] = ['s', 'm', 'l']
 const stepSize = (size: Look['size'], d: number) => SIZES[Math.max(0, Math.min(2, SIZES.indexOf(size) + d))]!
 
 const clampPct = (n: number) => Math.max(30, Math.min(100, Math.round(n)))
 
 // The surface's `Svg`, where it draws one (every surface but the terminal).
-const svgOf = ($: EngineInterface, e: RenderInput) =>
-  e.surface === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
+// The Terminal look draws text everywhere, as the terminal does.
+const svgOf = ($: EngineInterface, e: RenderInput, style: LookStyle) =>
+  e.surface === 'terminal' || style === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
 
 // ---------- plumbing ----------
 
@@ -309,7 +311,7 @@ const COMMANDS = [
   '/gauge wrap 7d 95|on|off   wrap-up at the weekly limit',
   '/gauge compact 70|remind|auto|off   when to /compact',
   '/gauge footer auto|on|off  line under each answer',
-  '/gauge look classic|minimal  display style',
+  '/gauge look classic|minimal|terminal  display style',
   '/gauge size s|m|l          text size',
 ].join('\n')
 
@@ -360,7 +362,7 @@ export const register: Register = on => {
       if (a === 'on' || a === 'off' || a === 'auto') await changeSettings($, x => ({ ...x, footer: a }))
       return { text: `Line under each answer: ${(await read($, settings)).footer}.` }
     }
-    if (sub === 'look' && (a === 'classic' || a === 'minimal')) {
+    if (sub === 'look' && (a === 'classic' || a === 'minimal' || a === 'terminal')) {
       await changeSettings($, x => ({ ...x, look: { ...x.look, style: a } }))
       return { text: `Display style: ${a}.` }
     }
@@ -520,12 +522,12 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const isNarrow = e.props.bodyColumns < 90
     const { Box, Text, Button } = $.ui.resolve(e)
-    const Svg = svgOf($, e)
-    const sep = <Text color={C.rule}>  ·  </Text>
+    const Svg = svgOf($, e, look.style)
+    const sep = <Text color={C.rule}> │ </Text>
 
     const ctx = m ? ctxRatio(m) : 0
     const ctxColor = tone(ctx, 0.75, 0.9)
-    const [on1, off1] = bar(ctx, isNarrow ? 8 : 14)
+    const [on1, off1] = bar(ctx, isNarrow ? 8 : 16)
     const limits = (m?.limits ?? []).filter(x => !isNarrow || x.kind === 'five_hour')
     const drawn = m && readings(m, ctx, now, look.style)
 
@@ -540,27 +542,38 @@ export const register: Register = on => {
       ) : (
         m && (
           <Box flexDirection="row" flexWrap="wrap">
+            <Text color={C.accent}>◆ </Text>
             <Text dimColor>ctx </Text>
             <Text color={ctxColor}>{on1}</Text>
             <Text color={C.rule}>{off1}</Text>
-            <Text color={ctx >= 0.9 ? C.hot : undefined}> {m.percent ?? 0}%</Text>
+            <Text color={ctxColor} bold>
+              {' '}
+              {m.percent ?? 0}%
+            </Text>
             {!isNarrow && m.tokens !== undefined && (
               <Text dimColor>
                 {' '}
                 {k(m.tokens)}/{k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}
               </Text>
             )}
-            {ctx >= 0.9 && <Text color={C.hot}> compacts soon</Text>}
+            {!isNarrow && m.delta ? (
+              <Text dimColor>
+                {' '}
+                {m.delta > 0 ? '+' : ''}
+                {k(m.delta)}
+              </Text>
+            ) : null}
+            {ctx >= 0.9 && <Text color={C.hot}> ⚠ compacts soon</Text>}
             {limits.map(x => {
               const c = tone(x.percent / 100, 0.7, 0.9)
-              const [a, b] = bar(x.percent / 100, 6)
+              const [a, b] = bar(x.percent / 100, 5, '▰', '▱')
               return (
                 <Box flexDirection="row">
                   {sep}
                   <Text dimColor>{limitLabel(x.kind)} </Text>
                   <Text color={c}>{a}</Text>
                   <Text color={C.rule}>{b}</Text>
-                  <Text color={x.percent >= 90 ? C.hot : undefined}> {x.percent}%</Text>
+                  <Text color={c}> {x.percent}%</Text>
                   <Text dimColor> {resetIn(x, now)}</Text>
                 </Box>
               )
@@ -767,14 +780,14 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
           s.compact.mode !== 'off',
         )}
       </Box>
-      {head('Display', 'Classic: deep solid colors. Minimal: quiet tones, small caps.')}
+      {head('Display', 'Classic: deep solid colors. Minimal: quiet tones. Terminal: the text bars, everywhere.')}
       <Box flexDirection="row" gap={1}>
         <Text>{'Style'.padEnd(14)}</Text>
         <Button
           key="look-style"
           label={STYLE_LABEL[s.look.style]}
           onPress={() =>
-            changeSettings($, x => ({ ...x, look: { ...x.look, style: x.look.style === 'classic' ? 'minimal' : 'classic' } }))
+            changeSettings($, x => ({ ...x, look: { ...x.look, style: nextStyle[x.look.style] } }))
           }
         />
       </Box>
@@ -811,7 +824,6 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
 
 async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>, columns: number) {
   const { Box, Text, Button } = $.ui.resolve(e)
-  const Svg = svgOf($, e)
   const m = await read($, meter)
   const l = await read($, live)
   const hist = await read($, history)
@@ -819,6 +831,7 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
   const s = await read($, settings)
   const collapsed = await read($, isCollapsed)
   const look = await lookOf($)
+  const Svg = svgOf($, e, look.style)
   await read($, tick)
   const now = await $.clock.now()
   const width = Math.max(12, columns - 2)
