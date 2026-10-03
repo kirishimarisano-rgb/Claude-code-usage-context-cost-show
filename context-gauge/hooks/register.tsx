@@ -11,7 +11,7 @@ import type {
   Timer,
 } from 'claude-code'
 
-import { alt, PALETTE, readings, stack, strip } from './svg'
+import { alt, PALETTE, pill, readings, stack, strip } from './svg'
 import type {
   CompactMode,
   Current,
@@ -36,6 +36,7 @@ import type {
 const PANE = 'gauge'
 const SETTINGS_PANE = 'gauge-settings'
 const TIMELINE_PANE = 'gauge-timeline'
+const PICKER_PANE = 'gauge-model'
 const YSK = 'cc-plugin-you-should-know@builtin'
 
 const DEFAULTS: GaugeSettings = {
@@ -485,6 +486,10 @@ async function summarize($: EngineInterface, id: string, prompt: string, answer:
 
 const openTimeline = ($: EngineInterface) => $.ui.open({ id: TIMELINE_PANE, title: 'Timeline' })
 
+// The model picker opens as a small dialog: it takes the keys, Esc closes it.
+const openPicker = ($: EngineInterface) =>
+  $.ui.open({ id: PICKER_PANE, title: 'Model', focus: true, closeOnEscape: true, rows: 9 })
+
 async function jumpTo($: EngineInterface, id: string) {
   if (id.startsWith('turn-')) {
     $.ui.toast('This line has no message to jump to.', { timeoutMs: 4000 })
@@ -519,7 +524,8 @@ const COMMANDS = [
   '/gauge look classic|minimal|terminal  display style',
   '/gauge size s|m|l          text size',
   '/gauge model 1-5           switch to a slider position',
-  '/gauge models on|off       show or hide the model slider',
+  '/gauge model               the model picker',
+  '/gauge models on|off       show or hide the model chip',
   '/gauge max on|off          you have a Max plan (unlocks Fable)',
   '/gauge fast                toggle fast mode',
   '/gauge style [name]        next output style, or one by name',
@@ -590,6 +596,18 @@ export const register: Register = on => {
     if (sub === 'size' && (a === 's' || a === 'm' || a === 'l')) {
       await changeSettings($, x => ({ ...x, look: { ...x.look, size: a } }))
       return { text: `Text size: ${a.toUpperCase()}.` }
+    }
+    if (sub === 'model' && a === undefined) {
+      const opened = await openPicker($)
+      const s = await read($, settings)
+      const c = await read($, current)
+      const at = activeSlot(c, s.models)
+      return {
+        text: opened.isPlaced
+          ? 'Model picker opened.'
+          : s.models.slots.map((x, i) => `${i === at ? '●' : '○'} ${i + 1} ${slotLabel(x)}${isLocked(x, s.models) ? ' (Max)' : ''}`).join('\n') +
+            '\nUse /gauge model 1-5.',
+      }
     }
     if (sub === 'model') {
       const i = Number(a) - 1
@@ -840,11 +858,13 @@ export const register: Register = on => {
     const drawn = m && readings(m, ctx, now, look.style)
 
     const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
+    const chip = await drawChip($, e)
 
     const meterRow =
       m && drawn && Svg ? (
         <Box flexDirection="row" alignItems="center" gap={2}>
           <Svg source={strip(drawn, m.usd, look)} alt={alt(drawn, m.usd)} />
+          {chip}
           {gear}
         </Box>
       ) : (
@@ -893,6 +913,8 @@ export const register: Register = on => {
               </Box>
             )}
             <Text> </Text>
+            {chip}
+            <Text> </Text>
             {gear}
           </Box>
         )
@@ -931,13 +953,10 @@ export const register: Register = on => {
       </Box>
     )
 
-    const modelRow = await drawModelRow($, e)
-
     return (
       <Box flexDirection="column">
         {wrapRow}
         {meterRow}
-        {modelRow}
         {liveRow}
       </Box>
     )
@@ -948,6 +967,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawGauge($, e, e.props.bodyColumns))
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, ($, e) => drawSettings($, e))
   on('ui.render', { component: 'Pane', requestId: TIMELINE_PANE }, ($, e) => drawTimeline($, e))
+  on('ui.render', { component: 'Pane', requestId: PICKER_PANE }, ($, e) => drawPicker($, e))
 
   // The /gauge rows draw live in the transcript on every client that draws
   // plugin trees: the mobile app draws no band and places no pane.
@@ -956,6 +976,7 @@ export const register: Register = on => {
     if (sub === '') return drawGauge($, e, e.viewport?.columns ?? 60)
     if (sub === 'settings') return drawSettings($, e)
     if (sub === 'timeline') return drawTimeline($, e)
+    if (sub === 'model') return drawPicker($, e)
     return next(e)
   })
 }
@@ -1127,8 +1148,8 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
 
   const models = (
     <Box flexDirection="column">
-      {head('Model slider', 'Five positions above the prompt. Click a part to change it.')}
-      {row('Show slider', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))))}
+      {head('Model picker', 'A chip above the prompt opens it. Click a part of a position to change it.')}
+      {row('Show chip', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))))}
       {s.models.slots.map((slot, i) =>
         row(
           `Position ${i + 1}`,
@@ -1183,6 +1204,87 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
     <Box flexDirection="column">
       {tabs}
       {tab === 'usage' ? usage : tab === 'models' ? models : tab === 'timeline' ? timelineTab : display}
+    </Box>
+  )
+}
+
+// The band's one model control: the position in use, a press opens the picker.
+async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
+  const s = await read($, settings)
+  if (!s.models.isShown) return null
+  const c = await read($, current)
+  const { Button } = $.ui.resolve(e)
+  const at = activeSlot(c, s.models)
+  const slot = at === null ? undefined : s.models.slots[at]
+  const name = slot ? slotLabel(slot) : c.model ? modelLabel(familyOf(c.model) ?? c.model) : 'Model'
+  return <Button key="model-chip" label={`${c.fast ? '⚡ ' : ''}${name} ›`} plain dimColor onPress={() => openPicker($)} />
+}
+
+const PILL_FILL = '#e9b949'
+
+// The picker: the position's name, the pill, a press per position, then fast
+// mode and output style. Drag on the terminal's slider; the pill is a picture.
+async function drawPicker($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  await lookOf($)
+  const s = await read($, settings)
+  const c = await read($, current)
+  const at = activeSlot(c, s.models)
+  const slots = s.models.slots
+  const locked = slots.map(x => isLocked(x, s.models))
+  const slot = at === null ? undefined : slots[at]
+  const Svg = e.surface === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
+  const Client =
+    e.surface === 'terminal' ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client : undefined
+  const effortWord: Record<EffortName, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' }
+
+  const title = (
+    <Box flexDirection="row" gap={1}>
+      <Text bold>{at === null ? '–' : at + 1}</Text>
+      <Text bold>{slot ? modelLabel(slot.model) : c.model ?? 'Model'}</Text>
+      <Text dimColor>{slot ? effortWord[slot.effort] : c.effort ?? ''}</Text>
+      <Button key="picker-settings" label="›" plain dimColor onPress={() => update($, settingsTab, () => 'models').then(() => openSettings($))} />
+    </Box>
+  )
+
+  const track = Client ? (
+    <Client key="model-slider" module="./slider.tsx" props={{ labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }} width={slots.length * 14} />
+  ) : Svg ? (
+    <Svg source={pill(slots.length, at, locked, PILL_FILL)} alt={`position ${at === null ? 'none' : at + 1} of ${slots.length}`} />
+  ) : null
+
+  const picks = !Client && (
+    <Box flexDirection="row" flexWrap="wrap" gap={1}>
+      {slots.map((x, i) => (
+        <Button
+          key={`pick-${i}`}
+          label={`${locked[i] ? '⊘ ' : ''}${slotLabel(x)}`}
+          plain
+          dimColor={i !== at}
+          onPress={() => applySlot($, i)}
+        />
+      ))}
+    </Box>
+  )
+
+  const modes = (
+    <Box flexDirection="row" gap={2}>
+      <Button key="picker-fast" label={c.fast ? '⚡ Fast on' : '⚡ Fast'} dimColor={!c.fast} onPress={() => toggleFast($)} />
+      <Button
+        key="picker-style"
+        label={`Style: ${c.outputStyle ?? 'default'}`}
+        dimColor
+        onPress={() => void setStyle($).then(t => $.ui.toast(t))}
+      />
+    </Box>
+  )
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      {title}
+      {track}
+      {picks}
+      {modes}
     </Box>
   )
 }

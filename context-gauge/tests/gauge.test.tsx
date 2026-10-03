@@ -197,6 +197,13 @@ test('auto wrap-up waits for a running task, then fires once', async ($, on) => 
   expect(sent()).toBe(1)
 })
 
+const PICKER = {
+  plugin: 'context-gauge',
+  component: 'Pane',
+  requestId: 'gauge-model',
+  props: { title: 'Model', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 9 }, view: {} },
+} as const
+
 const run = ($: Engine, args: string) =>
   $.command.run({ command: 'gauge', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
 
@@ -340,12 +347,20 @@ test('the slider switches model and effort, and keeps Fable locked without Max',
   on('config.list', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
 
-  // Desktop draws the draggable Client; a release on position 3 switches.
-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  const slider = await ui.find({ type: 'Client' })
-  expect(String(slider?.props.module)).toMatch(/slider\.tsx$/)
-  expect((slider?.props.props as { labels: string[] }).labels).toEqual(['Sonnet low', 'Sonnet high', 'Opus med', 'Opus xhigh', 'Fable high'])
-  await ui.unmount()
+  // The band keeps one small chip; the picker holds the positions.
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await band.find({ key: 'model-chip' })).toBeDefined()
+  expect(await band.find({ type: 'Client' })).toBeUndefined()
+  await band.unmount()
+  const picker = await $.ui.mount({ ...PICKER, surface: 'desktop' })
+  expect(await picker.find({ type: 'Svg' })).toBeDefined()
+  expect((await picker.findAll({ type: 'Button' })).map(b => b.text)).toEqual(
+    expect.arrayContaining(['Sonnet low', 'Sonnet high', 'Opus med', 'Opus xhigh', '⊘ Fable high', '⚡ Fast']),
+  )
+  await picker.unmount()
+  const term = await $.ui.mount({ ...PICKER, surface: 'terminal' })
+  expect(String((await term.find({ type: 'Client' }))?.props.module)).toMatch(/slider\.tsx$/)
+  await term.unmount()
 
   await run($, 'model 3')
   await clock.advance(1)
@@ -381,7 +396,7 @@ test('the slider can be hidden, and mobile gets buttons in the /gauge row', asyn
   await phone.unmount()
   await run($, 'models off')
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect(await band.find({ type: 'Client' })).toBeUndefined()
+  expect(await band.find({ key: 'model-chip' })).toBeUndefined()
   await band.unmount()
 })
 
@@ -416,12 +431,12 @@ test('each prompt becomes a timeline line, colored by how its turn ended', async
   await ui.unmount()
 })
 
-test('dragging the slider across positions switches on release', async ($, on) => {
+test('dragging the terminal slider across positions switches on release', async ($, on) => {
   const clock = engine(on)
   const ran = commands(on)
   on('session.surfaces', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const ui = await $.ui.mount({ ...PICKER, surface: 'terminal' })
   await ui.resize({ columns: 70, rows: 1 })
   // Five positions over 70 cells: 14 each. Press on 1, drag to 4, let go.
   await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left' })
@@ -430,5 +445,17 @@ test('dragging the slider across positions switches on release', async ($, on) =
   await ui.pointer({ type: 'up', x: 45, y: 0, button: 'left' })
   await clock.advance(1)
   expect(ran).toEqual(['/model opus', '/effort xhigh'])
+  await ui.unmount()
+})
+
+test('a press on a position in the desktop picker switches', async ($, on) => {
+  const clock = engine(on)
+  const ran = commands(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(60_000, 10))
+  const ui = await $.ui.mount({ ...PICKER, surface: 'desktop' })
+  await ui.press({ key: 'pick-1' })
+  await clock.advance(1)
+  expect(ran).toEqual(['/model sonnet', '/effort high'])
   await ui.unmount()
 })

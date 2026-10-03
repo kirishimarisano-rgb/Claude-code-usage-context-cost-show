@@ -196,3 +196,30 @@ export function stack(rs: Reading[], width: number, look: Look): string {
 export const alt = (rs: Reading[], usd: number | undefined) =>
   rs.map(r => `${r.label.toLowerCase()} ${r.value}${r.sub ? ` (${r.sub})` : ''}`).join(', ') +
   (usd !== undefined ? `, cost $${usd.toFixed(2)}` : '')
+
+// The model picker's pill: a dark track, the chosen part filled, a dot per
+// position and a white knob on the chosen one.
+export function pill(n: number, active: number | null, locked: boolean[], fill: string): string {
+  const W = 340
+  const H = 52
+  const pad = 6
+  const k = (H - 2 * pad) / 2
+  const x = (i: number) => pad + k + (n === 1 ? 0 : (i * (W - 2 * pad - 2 * k)) / (n - 1))
+  const parts = [
+    `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="${H / 2 - 0.5}" fill="#202124" stroke="#3a3b40"/>`,
+  ]
+  if (active !== null) {
+    parts.push(`<rect x="${pad}" y="${pad}" width="${(x(active) + k - pad).toFixed(1)}" height="${H - 2 * pad}" rx="${k}" fill="${fill}"/>`)
+  }
+  for (let i = 0; i < n; i++) {
+    if (i === active) continue
+    const isFilled = active !== null && i < active
+    const color = isFilled ? 'rgba(255,255,255,0.32)' : locked[i] ? '#4a4b50' : '#6b6d73'
+    parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${H / 2}" r="5.5" fill="${color}"/>`)
+    if (locked[i] && !isFilled) {
+      parts.push(`<line x1="${(x(i) - 4).toFixed(1)}" y1="${H / 2 + 4}" x2="${(x(i) + 4).toFixed(1)}" y2="${H / 2 - 4}" stroke="#202124" stroke-width="1.6"/>`)
+    }
+  }
+  if (active !== null) parts.push(`<circle cx="${x(active).toFixed(1)}" cy="${H / 2}" r="${k - 2.5}" fill="#ffffff"/>`)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`
+}

@@ -14,7 +14,7 @@ Desktop 和手機 app 畫一行高的 SVG 細條（上方是輸入框上的細�
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
-- **模型滑塊**：輸入框上方五個檔位，拖動或點擊切換「模型 + 思考強度」（預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high）。Fable 檔位只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。旁邊有 Fast mode 和輸出風格的快速切換。可在設定頁關閉。
+- **模型選擇器**：細條上只有一個小標籤（例如 `Sonnet low ›`），按下彈出選擇器：藥丸形滑塊顯示五個檔位，點一下切換「模型 + 思考強度」（終端可拖動），旁邊是 Fast mode 和輸出風格。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 檔位只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。標籤可在設定頁關閉。
 - **時間軸**：每次你發的訊息一條線，綠色完成、紅色出錯、黃色中止，附耗時、工具數、改過的檔案；點一下捲回那段對話。AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用到 token）。
 - **You should know**：Anthropic 內建的側邊 agent（`cc-plugin-you-should-know@builtin`），可在設定頁一鍵開關。
 - **設定頁**：`/gauge settings`，或細條旁的 ⚙；分成 Usage / Models / Timeline / Display 四頁
@@ -57,8 +57,9 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge compact 70\|remind\|auto\|off` | context 到幾 % 時提醒或自動 /compact |
 | `/gauge look classic\|minimal\|terminal` | 顯示風格：Classic（深綠/深黃/深紅，預設）、Minimal（低飽和）、Terminal（最原本的文字進度條，Desktop 也用文字畫） |
 | `/gauge size s\|m\|l` | 文字大小（預設 M） |
-| `/gauge model 1-5` | 切到滑塊的第幾格 |
-| `/gauge models on\|off` | 顯示或隱藏模型滑塊 |
+| `/gauge model` | 打開模型選擇器 |
+| `/gauge model 1-5` | 切到第幾格 |
+| `/gauge models on\|off` | 顯示或隱藏模型標籤 |
 | `/gauge max on\|off` | 你是 Max 方案（解鎖 Fable） |
 | `/gauge fast` | 切換 Fast mode |
 | `/gauge style [名稱]` | 下一個輸出風格，或指定一個 |
