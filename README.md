@@ -121,3 +121,7 @@ claude plugin install context-gauge@kirishima-mods
 claude plugin validate context-gauge
 claude plugin test context-gauge
 ```
+
+### 授權
+
+[MIT](LICENSE)
