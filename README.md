@@ -10,7 +10,16 @@
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h 或 7d 達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 
-### 使用
+### 安裝（CLI 和 Desktop 都適用）
+
+```sh
+claude plugin marketplace add kirishimarisano-rgb/Claude-code-usage-context-cost-show
+claude plugin install context-gauge@kirishima-mods
+```
+
+裝好後重開 Claude Code。Desktop 要完全結束再開（Mac 用 ⌘Q），然後在 **Code** 分頁開本機 session。更新：`claude plugin marketplace update kirishima-mods`。
+
+### 不安裝、直接從資料夾跑
 
 ```sh
 git clone https://github.com/kirishimarisano-rgb/Claude-code-usage-context-cost-show

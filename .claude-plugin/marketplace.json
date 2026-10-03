@@ -1,0 +1,16 @@
+{
+  "name": "kirishima-mods",
+  "owner": {
+    "name": "kirishimarisano-rgb"
+  },
+  "metadata": {
+    "description": "Claude Code mods by kirishimarisano-rgb"
+  },
+  "plugins": [
+    {
+      "name": "context-gauge",
+      "source": "./context-gauge",
+      "description": "Context, 5h/7d limits, cost, thinking time, tool timeline and a Stop button above the prompt; a foldable side pane; opt-in auto wrap-up near the limit"
+    }
+  ]
+}
