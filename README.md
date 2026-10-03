@@ -17,6 +17,18 @@ git clone https://github.com/kirishimarisano-rgb/Mods-Claude-code-0-powerd-by-cl
 claude --plugin-dir ./Mods-Claude-code-0-powerd-by-claude/context-gauge
 ```
 
+**Claude Code Desktop**（不能加參數）：在 `~/.claude/settings.json` 的 `env` 加上 mod 的絕對路徑，然後在 Desktop 的 Code 分頁開一個**本機** session（不是雲端 session）：
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_PLUGIN_DIRS": "/Users/you/Mods-Claude-code-0-powerd-by-claude/context-gauge"
+  }
+}
+```
+
+Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自動重載，再加 `"CLAUDE_CODE_PLUGIN_DIR_WATCH": "1"`。
+
 | 指令 | 作用 |
 | --- | --- |
 | `/gauge` | 在對話裡顯示儀表（只能顯示文字的客戶端會看到文字快照） |
