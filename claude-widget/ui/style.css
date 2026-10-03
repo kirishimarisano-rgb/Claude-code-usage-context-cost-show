@@ -1,0 +1,271 @@
+:root {
+  --clay: #d97757;
+  --clay-deep: #c15f3c;
+  --clay-glow: rgba(217, 119, 87, 0.45);
+  --ink: #f6f1ea;
+  --ink-2: rgba(246, 241, 234, 0.72);
+  --ink-3: rgba(246, 241, 234, 0.46);
+  --ok: #6fbf8e;
+  --warn: #e3a64f;
+  --bad: #e0675a;
+  --line: rgba(255, 255, 255, 0.14);
+  --tint: rgba(28, 22, 20, 0.42);
+  --well: rgba(255, 255, 255, 0.06);
+  --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft JhengHei UI", "PingFang TC", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  color: var(--ink);
+  font: 13px/1.4 var(--font);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* The preview outside the app: a desktop to see the glass against. */
+html.demo body {
+  background:
+    radial-gradient(60% 80% at 15% 20%, #f1a37f 0%, transparent 60%),
+    radial-gradient(50% 70% at 85% 30%, #6a7fd8 0%, transparent 60%),
+    radial-gradient(70% 90% at 60% 100%, #2c6b5b 0%, transparent 60%),
+    #1d1b22;
+  padding: 28px;
+}
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+
+/* ---------- the glass ---------- */
+
+.glass {
+  position: relative;
+  height: 100%;
+  border-radius: 22px;
+  overflow: hidden;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.04) 38%, rgba(255, 255, 255, 0.02) 100%),
+    var(--tint);
+  border: 1px solid var(--line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 18px 50px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(30px) saturate(170%);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  display: flex;
+  flex-direction: column;
+}
+
+/* A soft light across the top edge, and the clay glow behind the work. */
+.sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 60% at 30% -20%, rgba(255, 255, 255, 0.22), transparent 55%),
+    radial-gradient(40% 50% at 12% 70%, rgba(217, 119, 87, 0.22), transparent 70%);
+}
+
+.bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 6px 18px;
+}
+
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: 0.01em; }
+.spark { width: 16px; height: 16px; fill: var(--clay); filter: drop-shadow(0 0 6px var(--clay-glow)); }
+.summary { font-weight: 400; color: var(--ink-3); font-size: 12px; }
+
+.actions { display: flex; gap: 2px; }
+.icon {
+  width: 28px; height: 28px; border-radius: 9px;
+  display: grid; place-items: center;
+  color: var(--ink-3);
+  transition: background 0.15s, color 0.15s;
+}
+.icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.icon:hover { background: var(--well); color: var(--ink); }
+.icon.on { color: var(--clay); }
+#pin svg, #compact svg { fill: currentColor; stroke: none; }
+#close:hover { background: rgba(224, 103, 90, 0.25); }
+
+.body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 12px;
+  padding: 4px 14px 14px;
+}
+
+/* ---------- the focused session ---------- */
+
+.focus {
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.project { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prompt { color: var(--ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+
+.doing { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13.5px; }
+.doing .what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.doing b { font-weight: 600; color: var(--ink); }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--ink-3); }
+.dot.running { background: var(--clay); box-shadow: 0 0 0 0 var(--clay-glow); animation: pulse 1.6s ease-out infinite; }
+.dot.ok { background: var(--ok); }
+.dot.error { background: var(--bad); }
+.dot.stopped { background: var(--warn); }
+.dot.lost { background: transparent; border: 1.5px solid var(--ink-3); }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 var(--clay-glow); }
+  100% { box-shadow: 0 0 0 9px rgba(217, 119, 87, 0); }
+}
+
+.progress { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.ring { width: 58px; height: 58px; flex: none; }
+.ring circle { fill: none; stroke-width: 5; }
+.ring .track { stroke: rgba(255, 255, 255, 0.1); }
+.ring .fill { stroke: url(#clay); stroke-linecap: round; transition: stroke-dashoffset 0.6s ease; }
+.ring text { fill: var(--ink); font: 600 13px var(--font); }
+.steps { min-width: 0; }
+.steps .now { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.steps .time { color: var(--ink-3); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.steps .time em { font-style: normal; color: var(--clay); }
+
+.meters { margin-top: auto; padding-top: 12px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.meter .k { font-size: 11px; color: var(--ink-3); display: flex; justify-content: space-between; }
+.meter .k span:last-child { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.meter .track { height: 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); margin-top: 4px; overflow: hidden; }
+.meter .fill { height: 100%; border-radius: 3px; background: var(--ok); transition: width 0.6s ease; }
+.meter .fill.warn { background: var(--warn); }
+.meter .fill.bad { background: var(--bad); }
+.foot { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 11.5px; margin-top: 8px; }
+
+.empty { margin: auto; text-align: center; color: var(--ink-3); line-height: 1.6; }
+.empty b { color: var(--ink-2); font-weight: 600; display: block; font-size: 14px; }
+.empty code { color: var(--clay); }
+
+/* ---------- the hub ---------- */
+
+.hub { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.hub-head { display: flex; align-items: baseline; gap: 6px; padding: 2px 4px 8px; font-weight: 600; font-size: 12px; letter-spacing: 0.04em; color: var(--ink-2); }
+.count { color: var(--ink-3); font-weight: 400; }
+.list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+.list::-webkit-scrollbar { width: 4px; }
+.list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 2px; }
+
+.task {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 2px 10px;
+  align-items: center;
+  padding: 9px 12px 10px;
+  border-radius: 13px;
+  background: var(--well);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.task:hover { background: rgba(255, 255, 255, 0.09); }
+.task.sel { border-color: rgba(217, 119, 87, 0.55); background: rgba(217, 119, 87, 0.1); }
+.task .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 6px; align-items: baseline; }
+.task .model { font-weight: 400; font-size: 11px; color: var(--ink-3); }
+.task .act { grid-column: 2 / 3; color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task .side { grid-row: 1 / 3; grid-column: 3; text-align: right; font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+.task .side .t { line-height: 1.35; }
+.task .side em { font-style: normal; color: var(--clay); display: block; }
+.task .bar2 { grid-column: 2 / 3; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin-top: 5px; }
+.task .bar2 i { display: block; height: 100%; background: linear-gradient(90deg, var(--clay-deep), var(--clay)); border-radius: 2px; transition: width 0.6s ease; }
+.task .bar2 i.flow { width: 35% !important; animation: flow 1.4s ease-in-out infinite; }
+@keyframes flow { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+
+.stop {
+  width: 26px; height: 26px; border-radius: 8px;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  opacity: 0; transition: opacity 0.15s, background 0.15s;
+}
+.stop::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--ink); }
+.task:hover .stop { opacity: 1; }
+.stop:hover { background: rgba(224, 103, 90, 0.35); }
+.stop.sent { opacity: 1; background: rgba(224, 103, 90, 0.2); }
+
+/* ---------- the pill (compact) ---------- */
+
+.pill { display: none; }
+.compact .bar, .compact .body { display: none; }
+.compact .pill {
+  display: flex; align-items: center; gap: 10px;
+  height: 100%; padding: 0 16px 0 18px;
+}
+.compact.glass { border-radius: 999px; }
+.pill .what { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.pill .what b { color: var(--ink); }
+.pill .pct { color: var(--clay); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pill .icon { margin-right: -8px; }
+
+/* ---------- settings ---------- */
+
+.settings {
+  position: absolute; inset: 0;
+  padding: 22px 26px;
+  background: rgba(26, 21, 19, 0.93);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.settings[hidden] { display: none; }
+.settings h2 { margin: 0; font-size: 16px; }
+.dim { color: var(--ink-3); margin: 0; }
+.small { font-size: 11.5px; }
+.mono, code { font-family: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace; }
+.pair { display: flex; gap: 8px; align-items: center; }
+.pair code {
+  flex: 1; padding: 9px 12px; border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line);
+  color: var(--clay); font-size: 12.5px; user-select: text;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chip { padding: 7px 14px; border-radius: 10px; background: var(--well); border: 1px solid var(--line); }
+.chip:hover { background: rgba(255, 255, 255, 0.12); }
+.chip.accent { background: var(--clay); border-color: transparent; color: #fff; font-weight: 600; align-self: flex-end; margin-top: auto; }
+.chip.accent:hover { background: var(--clay-deep); }
+.rows { display: flex; flex-direction: column; gap: 2px; }
+.row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.row select { background: rgba(0, 0, 0, 0.3); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font: inherit; }
+input[type="checkbox"] {
+  appearance: none; width: 32px; height: 18px; border-radius: 9px; margin: 0;
+  background: rgba(255, 255, 255, 0.15); position: relative; cursor: pointer; transition: background 0.15s;
+}
+input[type="checkbox"]::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; transition: transform 0.15s;
+}
+input[type="checkbox"]:checked { background: var(--clay); }
+input[type="checkbox"]:checked::after { transform: translateX(14px); }
+
+/* Stop takes no room until the row is pointed at. */
+.task:not(:hover) .stop:not(.sent) { display: none; }
+.ring.spin .fill { animation: spin 1.6s linear infinite; transform-origin: 29px 29px; }
+@keyframes spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+
+/* In the app, Windows draws the glass (acrylic) and rounds the window. */
+html.native .glass { border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22); border-color: rgba(255, 255, 255, 0.1); background: linear-gradient(160deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 40%), rgba(28, 22, 20, 0.28); }
+html.native .compact.glass { border-radius: 8px; }

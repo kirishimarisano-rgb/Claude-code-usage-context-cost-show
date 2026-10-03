@@ -11,6 +11,11 @@
       "name": "context-gauge",
       "source": "./context-gauge",
       "description": "Context, 5h/7d limits, cost, thinking time, tool timeline and a Stop button above the prompt; a foldable side pane; opt-in auto wrap-up near the limit"
+    },
+    {
+      "name": "widget-bridge",
+      "source": "./widget-bridge",
+      "description": "Sends each local session's status to the Claude Widget desktop app on this computer (127.0.0.1 only), and takes its Stop button"
     }
   ]
 }

@@ -127,6 +127,53 @@ claude plugin validate context-gauge
 claude plugin test context-gauge
 ```
 
-### 授權
+## Claude Widget（Windows 桌面小組件）
+
+![widget](docs/widget-preview.png)
+
+釘在桌面上的液態玻璃小組件，一次看所有本機 Claude Code session：
+
+- **左邊**：選中的 session 在做什麼（思考、撰寫、執行哪個工具）、待辦清單進度環、已用時間和**約剩多久**，加上 context、5 小時、7 天用量和花費。
+- **右邊中控**：每個 session 一列，有狀態燈、目前動作、進度條和時間；滑過去會出現 ■ 停止。
+- **結束提醒**：超過 10 秒的任務完成、出錯或被停止時，跳 Windows 通知。
+- 可以釘在最上層，或縮成一顆膠囊；位置會記住。有繁中和英文介面。
+
+分兩部分：桌面 App（`claude-widget/`）和 mod（`widget-bridge`），mod 負責把每個 session 的狀態送給 App。
+
+### 安裝
+
+1. **App**：到 [Actions → Claude Widget (Windows)](https://github.com/kirishimarisano-rgb/Claude-code-usage-context-cost-show/actions/workflows/widget.yml) 最新一次成功的建置，下載 `claude-widget-windows`，解壓後執行安裝檔。安裝檔沒有程式碼簽章，Windows SmartScreen 會跳警告，按「其他資訊 → 仍要執行」。
+2. **mod**：
+   ```sh
+   claude plugin install widget-bridge@kirishima-mods
+   ```
+   如果還沒加過 marketplace，先跑 context-gauge 安裝段落的第一行。
+3. **配對**：打開小組件 → ⚙，複製 `/widget pair …` 那一行，在 Claude Code 裡貼上執行一次。之後這台電腦的每個本機 session 都會自動出現。
+
+### 指令
+
+| 指令 | 作用 |
+| --- | --- |
+| `/widget` | 這個 session 有沒有連上小組件 |
+| `/widget pair <code>` | 和小組件配對 |
+| `/widget unpair` | 忘掉配對碼 |
+| `/widget on\|off` | 開始或停止傳送 |
+| `/widget port <n>` | 小組件的連接埠（預設 47615） |
+
+### 怎麼運作、安全性
+
+- mod 只把狀態 POST 到 `http://127.0.0.1:47615`，不會連到外網。送出的內容有：專案資料夾名稱、你這次訊息的前 80 字、模型、目前的工具和簡短說明（例如 Bash 的說明或指令開頭、檔名）、待辦清單的標題和進度、context／額度百分比、花費。
+- App 只監聽 127.0.0.1。要有配對碼才收資料，瀏覽器網頁送來的請求一律拒絕；每個請求最多 64 KB，最多記 40 個 session。
+- App 能要求的只有「停止這個 session 的這一輪」。mod 會核對 turn id，其他指令一律忽略。
+- 沒配對前，mod 什麼都不送。
+
+### 限制
+
+- 「約剩多久」是用待辦清單已完成的比例推算的，Claude 沒列待辦清單時只顯示已用時間。
+- 雲端 session 跑在雲端，連不到你的電腦，所以不會出現在小組件裡。
+- 通知按了不會跳回對應的 session。
+- 目前只建置 Windows 版。
+
+## 授權
 
 [MIT](LICENSE)

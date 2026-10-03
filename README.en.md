@@ -128,6 +128,53 @@ claude plugin validate context-gauge
 claude plugin test context-gauge
 ```
 
-### License
+## Claude Widget (Windows desktop widget)
+
+![widget](docs/widget-preview.png)
+
+A liquid-glass widget for the desktop that shows every local Claude Code session at once:
+
+- **Left**: what the chosen session is doing (thinking, writing, which tool), a ring for its task list, time spent and **roughly how long is left**, plus context, 5-hour and weekly usage, and cost.
+- **Right, the hub**: one row per session with a status light, what it is doing, a progress bar and times; hover for ■ Stop.
+- **Done notice**: a Windows notification when a task over 10 seconds finishes, fails or is stopped.
+- Keep it on top or shrink it to a pill; it remembers where you put it. Traditional Chinese and English.
+
+It comes in two parts: the desktop app (`claude-widget/`) and the `widget-bridge` mod, which sends each session's status to it.
+
+### Install
+
+1. **App**: open the latest green run of [Actions → Claude Widget (Windows)](https://github.com/kirishimarisano-rgb/Claude-code-usage-context-cost-show/actions/workflows/widget.yml), download `claude-widget-windows`, unzip it and run the installer. It is not code-signed, so SmartScreen warns: "More info → Run anyway".
+2. **Mod**:
+   ```sh
+   claude plugin install widget-bridge@kirishima-mods
+   ```
+   If you have not added the marketplace yet, run the first line of the context-gauge install first.
+3. **Pair**: open the widget → ⚙, copy the `/widget pair …` line and run it once in Claude Code. Every local session on this computer then shows up.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `/widget` | Whether this session reaches the widget |
+| `/widget pair <code>` | Pair with the widget |
+| `/widget unpair` | Forget the pairing code |
+| `/widget on\|off` | Send, or stop sending |
+| `/widget port <n>` | The widget's port (47615) |
+
+### How it works, and security
+
+- The mod only POSTs to `http://127.0.0.1:47615`, never to the internet. What it sends: the project folder's name, the first 80 characters of your message, the model, the running tool with a short note (a Bash description or the start of its command, a file name), the task list's titles and progress, context and usage percentages, and cost.
+- The app listens on 127.0.0.1 only and takes data only with the pairing code; requests from web pages are refused. At most 64 KB per request and 40 sessions.
+- All the app can ask for is "stop this turn of this session"; the mod checks the turn id and ignores anything else.
+- Before pairing, the mod sends nothing.
+
+### Limits
+
+- "Roughly how long is left" comes from the share of the task list done; without a task list it shows time spent only.
+- Cloud sessions run in the cloud and cannot reach your computer, so they do not show up.
+- A notification does not take you back to its session.
+- Only a Windows build for now.
+
+## License
 
 [MIT](LICENSE)

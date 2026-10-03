@@ -1,5 +1,10 @@
 # Changelog
 
+## Claude Widget 0.1.0 and widget-bridge 0.1.0
+
+- New: a Windows desktop widget (liquid glass, Claude's clay color) showing every local session: what it does, task-list progress with a time-left estimate, context and usage, a hub of all sessions with Stop, and a notification when a task ends.
+- New mod `widget-bridge`: sends each session's status to the widget on 127.0.0.1 after `/widget pair <code>`, and takes its Stop for the running turn only.
+
 ## context-gauge 1.1.1
 
 - The usage check shows only the 5-hour, weekly and per-model weekly windows. The answer also carries internal entries (such as `iguana_necktie` at 100%) that are not limits on you; they no longer appear in the band.

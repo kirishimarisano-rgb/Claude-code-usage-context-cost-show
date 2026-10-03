@@ -1,0 +1,10 @@
+{
+  "name": "widget-bridge",
+  "version": "0.1.0",
+  "description": "Sends each local session's status (what Claude is doing, task progress, context and usage) to the Claude Widget desktop app on this computer, and takes its Stop button",
+  "author": {
+    "name": "kirishimarisano-rgb"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
