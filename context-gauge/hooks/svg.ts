@@ -39,9 +39,18 @@ const TYPE: Record<LookStyle, { label: number; track: number; value: number; sub
   terminal: { label: 10, track: 0, value: 11, sub: 10 },
 }
 
+// Claude's theme, as /config holds it: dark, light, or auto (follow the OS).
+// An SVG drawn as an image sees only the OS scheme, so a set theme is passed in.
+let theme: 'auto' | 'dark' | 'light' = 'auto'
+export const setTheme = (value: string | undefined) => {
+  theme = !value || value === 'auto' ? 'auto' : value.startsWith('light') ? 'light' : 'dark'
+}
+
 const style = (s: LookStyle) => {
   const t = TYPE[s]
   const hot = PALETTE[s].hot
+  const light = `.value { fill: #23272e; } .label, .sub { fill: #646b76; } .hot { fill: ${hot}; } .track { fill: rgba(80, 86, 98, 0.14); }`
+  const scheme = theme === 'light' ? light : theme === 'dark' ? '' : `@media (prefers-color-scheme: light) { ${light} }`
   return `
   <style>
     text { font-family: ${FONT}; font-feature-settings: "tnum"; font-weight: 500; text-rendering: geometricPrecision; }
@@ -50,12 +59,7 @@ const style = (s: LookStyle) => {
     .sub { fill: ${s !== 'minimal' ? '#848a95' : '#6c727d'}; font-size: ${t.sub}px; }
     .hot { fill: ${s !== 'minimal' ? '#d24a3e' : hot}; }
     .track { fill: rgba(140, 146, 158, ${s !== 'minimal' ? 0.22 : 0.16}); }
-    @media (prefers-color-scheme: light) {
-      .value { fill: #23272e; }
-      .label, .sub { fill: #646b76; }
-      .hot { fill: ${hot}; }
-      .track { fill: rgba(80, 86, 98, 0.14); }
-    }
+    ${scheme}
   </style>`
 }
 
@@ -131,7 +135,21 @@ const svg = (w: number, h: number, scale: number, s: LookStyle, body: string) =>
 }
 
 // One line for the band: label, value, a short bar, the note.
-export function strip(rs: Reading[], usd: number | undefined, look: Look): string {
+// One line for the band, fitted to `maxWidth` CSS pixels when given: the notes
+// go first, then the cost, then the whole line scales down (to 80% at least).
+export function strip(rs: Reading[], usd: number | undefined, look: Look, maxWidth?: number): string {
+  const scale = SCALE[look.size]
+  const tries: [boolean, boolean][] = [[true, true], [false, true], [false, false]]
+  let line = ''
+  let width = 0
+  for (const [hasNotes, hasCost] of tries) {
+    ;[line, width] = stripAt(rs, hasCost ? usd : undefined, look, hasNotes)
+    if (maxWidth === undefined || width * scale <= maxWidth) return svg(width, 16, scale, look.style, line)
+  }
+  return svg(width, 16, Math.max(scale * 0.8, maxWidth! / width), look.style, line)
+}
+
+function stripAt(rs: Reading[], usd: number | undefined, look: Look, hasNotes: boolean): [string, number] {
   const s = look.style
   const t = TYPE[s]
   const tones = PALETTE[s]
@@ -145,6 +163,7 @@ export function strip(rs: Reading[], usd: number | undefined, look: Look): strin
     const vx = advance(r.label, t.label, t.track) + 6
     const bx = vx + advance(r.value, t.value) * 1.15 + 8
     const sx = bx + barW + 6
+    const sub = hasNotes || r.isHot ? r.sub : ''
     const fill = fillOf(r, barW)
     parts.push(`
       <g transform="translate(${x.toFixed(1)},0)">
@@ -152,9 +171,9 @@ export function strip(rs: Reading[], usd: number | undefined, look: Look): strin
         <text class="value${r.isHot ? ' hot' : ''}" x="${vx.toFixed(1)}" y="${mid + 0.5}">${r.value}</text>
         <rect class="track" x="${bx.toFixed(1)}" y="${mid - 4.5}" width="${barW}" height="${barH}" rx="${barH / 2}"/>
         ${fill > 0 ? `<rect x="${bx.toFixed(1)}" y="${mid - 4.5}" width="${Math.max(barH, fill).toFixed(1)}" height="${barH}" rx="${barH / 2}" fill="${colorOf(tones, r)}"/>` : ''}
-        <text class="sub" x="${sx.toFixed(1)}" y="${mid}">${r.sub}</text>
+        <text class="sub${r.isHot ? ' hot' : ''}" x="${sx.toFixed(1)}" y="${mid}">${sub}</text>
       </g>`)
-    x += sx + advance(r.sub, t.sub) + gap
+    x += (sub ? sx + advance(sub, t.sub) : sx - 6) + gap
   }
   if (usd !== undefined) {
     const label = LABELS[s].cost!
@@ -167,7 +186,7 @@ export function strip(rs: Reading[], usd: number | undefined, look: Look): strin
       </g>`)
     x += vx + advance(value, t.value) * 1.15 + 4
   }
-  return svg(x + 2, 16, SCALE[look.size], s, parts.join(''))
+  return [parts.join(''), x + 2]
 }
 
 // The same meters stacked, for the pane and the /gauge row.

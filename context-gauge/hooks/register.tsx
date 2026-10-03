@@ -12,7 +12,7 @@ import type {
   Timer,
 } from 'claude-code'
 
-import { alt, PALETTE, pill, readings, stack, strip } from './svg'
+import { alt, PALETTE, pill, readings, setTheme, stack, strip } from './svg'
 import type {
   CompactMode,
   Current,
@@ -102,6 +102,7 @@ let C = paletteFor('classic')
 async function lookOf($: EngineInterface) {
   const s = await read($, settings)
   C = paletteFor(s.look.style)
+  setTheme((await read($, current)).theme)
   return s.look
 }
 
@@ -434,12 +435,14 @@ async function youShouldKnowOn($: EngineInterface) {
 async function loadModes($: EngineInterface) {
   const rows = await $.config.list()
   const style = rows.find(r => r.key === 'outputStyle')
+  const themeRow = rows.find(r => r.key === 'theme')
   const ysk = await youShouldKnowOn($)
   await update($, current, c => ({
     ...c,
     outputStyle: style ? String(style.value) : c.outputStyle,
     styles: style?.options ? [...style.options] : c.styles,
     youShouldKnow: ysk,
+    theme: themeRow ? String(themeRow.value) : c.theme,
   }))
 }
 
@@ -584,6 +587,13 @@ export const register: Register = on => {
   // position the person let go on.
   on('ui.message', { element: 'model-slider' }, onSlide)
   on('ui.message', { element: 'model-track' }, onSlide)
+
+  // Follow /config's theme (the SVG's text colors) and output style.
+  on('config.set', async ($, e, next) => {
+    const r = await next(e)
+    if (e.key === 'theme' || e.key === 'outputStyle') await loadModes($)
+    return r
+  })
 
   on('command.run', { command: 'gauge' }, async ($, e) => {
     const [sub, a, b] = e.args.trim().toLowerCase().split(/\s+/)
@@ -889,14 +899,23 @@ export const register: Register = on => {
     const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
     const chip = await drawChip($, e)
     const strip_ = await drawStrip($, e)
+    // What the SVG line may take: the band's cells less the controls beside
+    // it, at a conservative 8px a cell (a desktop UI font's cell is ~7-8px).
+    const controlCells =
+      (chip ? 14 + 2 + (await chipNameLength($)) + 2 : 0) +
+      (strip_.ticks ? Math.min(24, (await read($, timeline)).length) + 2 : 0) +
+      4
+    const stripRoom = Math.max(160, (e.props.bodyColumns - controlCells - 2) * 8)
 
     const meterRow =
       m && drawn && Svg ? (
         <Box flexDirection="row" alignItems="center" gap={2}>
-          <Svg source={strip(drawn, m.usd, look)} alt={alt(drawn, m.usd)} />
-          {chip}
-          {strip_.ticks}
-          {gear}
+          <Svg source={strip(drawn, m.usd, look, stripRoom)} alt={alt(drawn, m.usd)} />
+          <Box flexDirection="row" alignItems="center" gap={2} flexShrink={0}>
+            {chip}
+            {strip_.ticks}
+            {gear}
+          </Box>
         </Box>
       ) : (
         m && (
@@ -1303,7 +1322,7 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   const name = slot ? slotLabel(slot) : c.model ? modelLabel(familyOf(c.model) ?? c.model) : 'Model'
   const n = s.models.slots.length
   return (
-    <Box flexDirection="row" gap={1}>
+    <Box flexDirection="row" gap={1} flexShrink={0}>
       {Client && (
         <Client
           key="model-track"
@@ -1321,6 +1340,16 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
       />
     </Box>
   )
+}
+
+// How many cells the chip's name takes, so the band leaves it room.
+async function chipNameLength($: EngineInterface) {
+  const s = await read($, settings)
+  const c = await read($, current)
+  const at = activeSlot(c, s.models)
+  const slot = at === null ? undefined : s.models.slots[at]
+  const name = slot ? slotLabel(slot) : c.model ? modelLabel(familyOf(c.model) ?? c.model) : 'Model'
+  return name.length + (c.fast ? 2 : 0)
 }
 
 // Claude's own orange: the model controls wear it in every look.

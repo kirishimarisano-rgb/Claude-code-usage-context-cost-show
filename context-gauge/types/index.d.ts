@@ -94,6 +94,7 @@ export type Current = {
   outputStyle?: string
   styles: string[]
   youShouldKnow: boolean | null
+  theme?: string
 }
 
 export type EntryStatus = 'running' | 'ok' | 'error' | 'stopped'
