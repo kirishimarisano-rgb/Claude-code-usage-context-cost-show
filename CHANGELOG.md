@@ -1,5 +1,10 @@
 # Changelog
 
+## Claude Widget 0.2.0
+
+- A new look: lighter glass that lets Windows' acrylic show through, a rim of light, a soft sheen and fine grain; no Claude mark; finer line icons; model names written as "Opus 5.5"; time spent, time left and cost as figures; a new app icon.
+- The window updates in place each second, so the pulse, the spinner and the progress bars no longer restart, and Stop stays under the pointer.
+
 ## Claude Widget 0.1.0 and widget-bridge 0.1.0
 
 - New: a Windows desktop widget (liquid glass, Claude's clay color) showing every local session: what it does, task-list progress with a time-left estimate, context and usage, a hub of all sessions with Stop, and a notification when a task ends.

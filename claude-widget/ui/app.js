@@ -11,7 +11,7 @@ const WORDS = {
     idle: '閒置', ended: '已結束', lost: '失去聯絡',
     last: { ok: '完成', error: '出錯', stopped: '已停止' },
     steps: (d, t) => `${d} / ${t} 步`,
-    elapsed: '已', left: '約剩', agents: n => `${n} 個子代理`,
+    used: '已用', remain: '約剩', stop: '停止這一輪', agents: n => `${n} 個子代理`,
     noList: '沒有待辦清單，只能看已用時間',
     ctx: 'Context', h5: '5 小時', d7: '7 天', cost: '花費',
     ago: '前',
@@ -29,7 +29,7 @@ const WORDS = {
     idle: 'Idle', ended: 'Ended', lost: 'Lost contact',
     last: { ok: 'Done', error: 'Failed', stopped: 'Stopped' },
     steps: (d, t) => `${d} / ${t} steps`,
-    elapsed: '', left: '~', agents: n => `${n} subagents`,
+    used: 'Elapsed', remain: 'Left', stop: 'Stop this turn', agents: n => `${n} subagents`,
     noList: 'No task list: elapsed time only',
     ctx: 'Context', h5: '5 hour', d7: '7 day', cost: 'Cost',
     ago: 'ago',
@@ -100,86 +100,140 @@ function view(row, now) {
 
 // ---------- drawing ----------
 
-function meter(label, pct) {
-  const p = Math.max(0, Math.min(100, Math.round(pct ?? 0)))
-  const tone = p >= 90 ? 'bad' : p >= 70 ? 'warn' : ''
-  return `<div class="meter"><div class="k"><span>${esc(label)}</span><span>${pct == null ? '—' : p + '%'}</span></div>
-    <div class="track"><div class="fill ${tone}" style="width:${p}%"></div></div></div>`
+// Turns the new markup into the live one in place, so running animations
+// (the pulse, the spinner, the flowing bar) and hover are never restarted.
+function morph(live, html) {
+  const next = document.createElement(live.tagName)
+  next.innerHTML = html
+  patch(live, next)
 }
 
-function ring(pct, text, isSpinning = false) {
-  const r = 24
+function patch(a, b) {
+  const as = [...a.childNodes]
+  const bs = [...b.childNodes]
+  bs.forEach((nb, i) => {
+    const na = as[i]
+    if (!na) return a.appendChild(nb)
+    if (na.nodeType !== nb.nodeType || na.nodeName !== nb.nodeName || (na.dataset?.id ?? '') !== (nb.dataset?.id ?? '')) {
+      return a.replaceChild(nb, na)
+    }
+    if (na.nodeType === Node.TEXT_NODE) {
+      if (na.nodeValue !== nb.nodeValue) na.nodeValue = nb.nodeValue
+      return
+    }
+    for (const { name } of [...na.attributes]) if (!nb.hasAttribute(name)) na.removeAttribute(name)
+    for (const { name, value } of [...nb.attributes]) if (na.getAttribute(name) !== value) na.setAttribute(name, value)
+    patch(na, nb)
+  })
+  for (let i = as.length - 1; i >= bs.length; i--) a.removeChild(as[i])
+}
+
+function prettyModel(m) {
+  if (!m) return ''
+  const x = /(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2})(?!\d))?/i.exec(m)
+  const wide = /\[1m\]/i.test(m) ? ' · 1M' : ''
+  if (!x) return m.replace(/^claude-/, '')
+  return `${x[1][0].toUpperCase()}${x[1].slice(1).toLowerCase()} ${x[2]}${x[3] ? '.' + x[3] : ''}${wide}`
+}
+
+const ICON = {
+  stop: '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.2"/></svg>',
+  expand: '<svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/></svg>',
+}
+
+function meter(label, pct) {
+  const p = Math.max(0, Math.min(100, Math.round(pct ?? 0)))
+  const tone = p >= 90 ? 'bad' : p >= 70 ? 'warn' : 'ok'
+  return `<div class="meter"><div class="k"><span>${esc(label)}</span><b>${pct == null ? '—' : p + '<small>%</small>'}</b></div>
+    <div class="track"><i class="${tone}" style="width:${Math.max(p, 2)}%"></i></div></div>`
+}
+
+function ring(pct, big, small, isSpinning = false) {
+  const r = 31
   const c = 2 * Math.PI * r
   const off = c * (1 - (pct ?? 0))
-  return `<svg class="ring${isSpinning ? ' spin' : ''}" viewBox="0 0 58 58">
-    <defs><linearGradient id="clay" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8946f"/><stop offset="1" stop-color="#c15f3c"/></linearGradient></defs>
-    <circle class="track" cx="29" cy="29" r="${r}"/>
-    <circle class="fill" cx="29" cy="29" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${off}" transform="rotate(-90 29 29)"/>
-    <text x="29" y="33.5" text-anchor="middle">${esc(text)}</text></svg>`
+  return `<div class="ring${isSpinning ? ' spin' : ''}"><svg viewBox="0 0 76 76">
+    <defs><linearGradient id="clay" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0a382"/><stop offset="1" stop-color="#c8603b"/></linearGradient></defs>
+    <circle class="track" cx="38" cy="38" r="${r}"/>
+    <circle class="fill" cx="38" cy="38" r="${r}" stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}"/></svg>
+    <div class="ring-text"><b>${esc(big)}</b>${small ? `<span>${esc(small)}</span>` : ''}</div></div>`
+}
+
+function stat(label, value, isAccent = false) {
+  return `<div class="stat${isAccent ? ' accent' : ''}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`
 }
 
 function drawFocus(v, limits) {
   const el = $('focus')
   if (!v) {
-    el.innerHTML = `<div class="empty"><b>${esc(state.paired ? W.idleAll : W.none)}</b>${esc(W.pairFirst)}</div>`
+    morph(el, `<div class="empty"><b>${esc(state.paired ? W.idleAll : W.none)}</b><span>${esc(W.pairFirst)}</span></div>`)
     return
   }
   const { s } = v
   const t = s.todos
   const lim = k => limits.find(x => x.kind === k)?.percent
-  let progress
-  if (t && t.total) {
-    progress = `${ring(v.pct, `${Math.round(v.pct * 100)}%`)}
-      <div class="steps"><div class="now">${esc(t.current || W.steps(t.done, t.total))}</div>
-      <div class="time">${esc(W.steps(t.done, t.total))} · ${esc(W.elapsed)} ${esc(clock(v.elapsed))}${v.eta != null ? ` · <em>${esc(W.left)} ${esc(roughly(v.eta))}</em>` : ''}</div></div>`
-  } else {
-    progress = `${ring(v.status === 'running' ? 0.22 : 1, clock(v.elapsed), v.status === 'running')}
-      <div class="steps"><div class="now">${v.status === 'running' ? esc(W.noList) : v.act}</div>
-      <div class="time">${esc(s.model ?? '')}${s.effort ? ' · ' + esc(s.effort) : ''}</div></div>`
-  }
-  el.innerHTML = `
-    <div class="project">${esc(s.project)}</div>
-    <div class="prompt">${esc(s.prompt ?? '')}</div>
+  const tag = [prettyModel(s.model), s.effort].filter(Boolean).join(' · ')
+  const stats = [
+    stat(W.used, clock(v.elapsed)),
+    v.eta != null ? stat(W.remain, roughly(v.eta), true) : '',
+    s.usd != null ? stat(W.cost, `$${s.usd.toFixed(2)}`) : '',
+  ].join('')
+  const progress =
+    t && t.total
+      ? `${ring(v.pct, `${Math.round(v.pct * 100)}%`, `${t.done}/${t.total}`)}
+         <div class="steps"><div class="now">${esc(t.current || W.steps(t.done, t.total))}</div><div class="stats">${stats}</div></div>`
+      : `${ring(v.status === 'running' ? 0.24 : 1, v.status === 'running' ? '···' : '✓', '', v.status === 'running')}
+         <div class="steps"><div class="now dim">${v.status === 'running' ? esc(W.noList) : v.act}</div><div class="stats">${stats}</div></div>`
+  morph(el, `
+    <div class="head">
+      <div class="titles"><div class="project">${esc(s.project)}</div><div class="prompt">${esc(s.prompt ?? '')}</div></div>
+      ${tag ? `<span class="tag">${esc(tag)}</span>` : ''}
+    </div>
     <div class="doing"><span class="dot ${v.dot}"></span><span class="what">${v.act}</span></div>
     <div class="progress">${progress}</div>
-    <div class="meters">${meter(W.ctx, s.ctx)}${meter(W.h5, lim('five_hour'))}${meter(W.d7, lim('seven_day'))}</div>
-    <div class="foot"><span>${esc(s.model ?? '')}</span><span>${s.usd != null ? `${esc(W.cost)} $${s.usd.toFixed(2)}` : ''}</span></div>`
+    <div class="meters">${meter(W.ctx, s.ctx)}${meter(W.h5, lim('five_hour'))}${meter(W.d7, lim('seven_day'))}</div>`)
 }
 
 function drawList(views) {
-  $('list').innerHTML = views
-    .map(v => {
-      const { s } = v
-      const bar =
-        v.status === 'running'
-          ? v.pct != null
-            ? `<div class="bar2"><i style="width:${Math.round(v.pct * 100)}%"></i></div>`
-            : `<div class="bar2"><i class="flow"></i></div>`
+  morph(
+    $('list'),
+    views
+      .map(v => {
+        const { s } = v
+        const isRunning = v.status === 'running'
+        const bar = isRunning
+          ? `<div class="line">${v.pct != null ? `<i style="width:${Math.max(4, Math.round(v.pct * 100))}%"></i>` : '<i class="flow"></i>'}</div>`
           : ''
-      const side =
-        v.status === 'running'
-          ? `<div class="t">${esc(clock(v.elapsed))}${v.eta != null ? `<em>${esc(W.left)} ${esc(roughly(v.eta))}</em>` : ''}</div>
-             <button class="stop ${stopping.has(s.turnId) ? 'sent' : ''}" data-stop="${esc(s.id)}" data-turn="${esc(s.turnId)}" title="Stop"></button>`
-          : `<div class="t">${s.last ? esc(clock(s.last.ms)) : ''}</div>`
-      return `<div class="task ${s.id === selected ? 'sel' : ''}" data-id="${esc(s.id)}">
-        <span class="dot ${v.dot}"></span>
-        <div class="name">${esc(s.project)}<span class="model">${esc((s.model ?? '').replace(/^claude-/, ''))}</span></div>
-        <div class="side">${side}</div>
-        <div class="act">${v.act}</div>
-        ${bar}
-      </div>`
-    })
-    .join('')
+        const side = isRunning
+          ? `<b>${esc(clock(v.elapsed))}</b>${v.eta != null ? `<em>${esc(W.remain)} ${esc(roughly(v.eta))}</em>` : ''}`
+          : `<b>${s.last ? esc(clock(s.last.ms)) : ''}</b>`
+        const stop = isRunning
+          ? `<button class="stop${stopping.has(s.turnId) ? ' sent' : ''}" data-stop="${esc(s.id)}" data-turn="${esc(s.turnId)}" title="${esc(W.stop)}">${ICON.stop}</button>`
+          : ''
+        return `<div class="task${s.id === selected ? ' sel' : ''}${isRunning ? ' live' : ''}" data-id="${esc(s.id)}">
+          <span class="dot ${v.dot}"></span>
+          <div class="main">
+            <div class="name"><span>${esc(s.project)}</span><small>${esc(prettyModel(s.model))}</small></div>
+            <div class="act">${v.act}</div>
+            ${bar}
+          </div>
+          <div class="side">${side}</div>
+          ${stop}
+        </div>`
+      })
+      .join(''),
+  )
 }
 
 function drawPill(v) {
-  const pct = v?.pct != null ? `<span class="pct">${Math.round(v.pct * 100)}%</span>` : v?.status === 'running' ? `<span class="pct">${esc(clock(v.elapsed))}</span>` : ''
-  $('pill').innerHTML = `
-    <svg class="spark" viewBox="0 0 24 24"><path d="M12 2.5l1.6 6.1 5.6-3-3 5.6 6.1 1.6-6.1 1.6 3 5.6-5.6-3L12 21.5l-1.6-6.1-5.6 3 3-5.6L1.7 11.2l6.1-1.6-3-5.6 5.6 3z"/></svg>
-    <span class="dot ${v?.dot ?? ''}"></span>
-    <span class="what" data-tauri-drag-region>${v ? `<b>${esc(v.s.project)}</b> · ${v.act}` : esc(W.idleAll)}</span>
-    ${pct}
-    <button class="icon" id="expand" title="${esc(W.expand)}"><svg viewBox="0 0 16 16"><path d="M3 6l5 5 5-5"/></svg></button>`
+  const end = v?.pct != null ? `${Math.round(v.pct * 100)}%` : v?.status === 'running' ? clock(v.elapsed) : ''
+  morph(
+    $('pill'),
+    `<span class="dot ${v?.dot ?? ''}"></span>
+    <span class="what" data-tauri-drag-region>${v ? `<b>${esc(v.s.project)}</b><span class="sep"></span>${v.act}` : esc(W.idleAll)}</span>
+    ${end ? `<span class="pct">${esc(end)}</span>` : ''}
+    <button class="icon" id="expand" title="${esc(W.expand)}">${ICON.expand}</button>`,
+  )
 }
 
 function draw() {
@@ -197,6 +251,7 @@ function draw() {
 
   $('app').classList.toggle('compact', state.compact)
   $('summary').textContent = running ? W.running(running) : ''
+  $('summary').classList.toggle('live', running > 0)
   $('hub-title').textContent = W.hub
   $('hub-count').textContent = views.length ? String(views.length) : ''
   $('pin').classList.toggle('on', state.pinned)
@@ -214,7 +269,7 @@ function drawSettings() {
   $('s-title').textContent = W.s.title
   $('s-pair-hint').textContent = W.s.pairHint
   $('pair-line').textContent = `/widget pair ${state.token}`
-  if ($('copy').dataset.done !== '1') $('copy').textContent = W.s.copy
+  if ($('copy').dataset.done !== '1') $('copy-text').textContent = W.s.copy
   $('s-notify').textContent = W.s.notify
   $('notify').checked = state.notify
   $('s-lang').textContent = W.s.lang
@@ -277,7 +332,7 @@ document.addEventListener('click', async e => {
         getSelection().addRange(r)
         document.execCommand('copy')
       }
-      t.textContent = W.s.copied
+      $('copy-text').textContent = W.s.copied
       t.dataset.done = '1'
       setTimeout(() => { t.dataset.done = ''; drawSettings() }, 1500)
   }
