@@ -79,6 +79,9 @@ const current = atom({ plugin: 'context-gauge', key: 'current' } as const, {
 const timeline = atom({ plugin: 'context-gauge', key: 'timeline' } as const, [] as Entry[])
 const settingsTab = atom({ plugin: 'context-gauge', key: 'settingsTab' } as const, 'usage' as SettingsTab)
 const isPickerOpen = atom({ plugin: 'context-gauge', key: 'isPickerOpen' } as const, false)
+// The strip's hovered entry: the band shows its line in place of the meters.
+const stripHover = atom({ plugin: 'context-gauge', key: 'stripHover' } as const, null as string | null)
+const isSearchOpen = atom({ plugin: 'context-gauge', key: 'isSearchOpen' } as const, false)
 
 const WRAP_DELAY_MS = 10_000
 const NOTIFY_AFTER_MS = 20_000
@@ -521,6 +524,32 @@ async function jumpTo($: EngineInterface, id: string) {
   if (r.deny) $.ui.toast(`Could not jump there (${r.deny})`, { timeoutMs: 5000 })
 }
 
+// The latest earlier prompt whose words (or summary) hold `query`.
+async function findEntry($: EngineInterface, query: string) {
+  const q = query.trim().toLowerCase()
+  if (!q) return undefined
+  const list = await read($, timeline)
+  return [...list].reverse().find(x => x.status !== 'running' && `${x.text} ${x.summary ?? ''}`.toLowerCase().includes(q))
+}
+
+async function findAndJump($: EngineInterface, query: string) {
+  const x = await findEntry($, query)
+  if (!x) {
+    $.ui.toast(`No earlier prompt mentions “${query.trim()}”.`, { timeoutMs: 4000 })
+    return
+  }
+  await update($, isSearchOpen, () => false)
+  await jumpTo($, x.id)
+}
+
+async function onStrip($: EngineInterface, e: { data: unknown }) {
+  const d = (e.data ?? {}) as { hover?: number | null; jump?: number }
+  const list = (await read($, timeline)).slice(-STRIP_MAX)
+  if ('hover' in d) await update($, stripHover, () => (d.hover == null ? null : (list[d.hover]?.id ?? null)))
+  if (typeof d.jump === 'number' && list[d.jump]) await jumpTo($, list[d.jump]!.id)
+  return {}
+}
+
 // ---------- actions ----------
 
 async function stopTurn($: EngineInterface) {
@@ -555,6 +584,7 @@ const COMMANDS = [
   '/gauge timeline            the session timeline',
   '/gauge summary on|off      AI summaries on the timeline (uses tokens)',
   '/gauge marks on|off        timeline marks on your messages',
+  '/gauge find <words>        jump to the latest earlier prompt with them',
   '/gauge strip on|off        timeline strip above the prompt',
 ].join('\n')
 
@@ -587,6 +617,7 @@ export const register: Register = on => {
   // position the person let go on.
   on('ui.message', { element: 'model-slider' }, onSlide)
   on('ui.message', { element: 'model-track' }, onSlide)
+  on('ui.message', { element: 'tl-strip' }, onStrip)
 
   // Follow /config's theme (the SVG's text colors) and output style.
   on('config.set', async ($, e, next) => {
@@ -670,6 +701,13 @@ export const register: Register = on => {
     if (sub === 'summary' && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isAiSummary: a === 'on' } }))
       return { text: `AI summaries on the timeline: ${a}.` }
+    }
+    if (sub === 'find') {
+      const query = e.args.trim().split(/\s+/).slice(1).join(' ')
+      const x = await findEntry($, query)
+      if (!x) return { text: query ? `No earlier prompt mentions “${query}”.` : 'Use /gauge find <words>.' }
+      await jumpTo($, x.id)
+      return { text: `${STATUS_DOT[x.status]} ${clock(x.at)}  ${x.text.slice(0, 80)}` }
     }
     if ((sub === 'marks' || sub === 'strip') && (a === 'on' || a === 'off')) {
       const key = sub === 'marks' ? 'isMarked' : 'isStrip'
@@ -898,76 +936,88 @@ export const register: Register = on => {
 
     const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
     const chip = await drawChip($, e)
-    const strip_ = await drawStrip($, e)
+    const ticks = await drawStrip($, e)
+    const card = await drawStripCard($, e)
+    const finder = <Button key="find" label="⌕" plain dimColor onPress={() => update($, isSearchOpen, x => !x)} />
     // What the SVG line may take: the band's cells less the controls beside
     // it, at a conservative 8px a cell (a desktop UI font's cell is ~7-8px).
     const controlCells =
-      (chip ? 14 + 2 + (await chipNameLength($)) + 2 : 0) +
-      (strip_.ticks ? Math.min(24, (await read($, timeline)).length) + 2 : 0) +
-      4
-    const stripRoom = Math.max(160, (e.props.bodyColumns - controlCells - 2) * 8)
+      (chip ? 16 + 2 + (await chipNameLength($)) + 2 : 0) +
+      (ticks ? Math.min(STRIP_MAX, (await read($, timeline)).length) * 2 + 2 : 0) +
+      7
+    const meterCells = Math.max(20, e.props.bodyColumns - controlCells - 2)
+    const stripRoom = meterCells * 8
 
     const meterRow =
       m && drawn && Svg ? (
         <Box flexDirection="row" alignItems="center" gap={2}>
-          <Svg source={strip(drawn, m.usd, look, stripRoom)} alt={alt(drawn, m.usd)} />
+          <Box width={meterCells} flexShrink={0}>
+            {card ?? <Svg source={strip(drawn, m.usd, look, stripRoom)} alt={alt(drawn, m.usd)} />}
+          </Box>
           <Box flexDirection="row" alignItems="center" gap={2} flexShrink={0}>
             {chip}
-            {strip_.ticks}
+            {ticks}
+            {finder}
             {gear}
           </Box>
         </Box>
       ) : (
         m && (
-          <Box flexDirection="row" flexWrap="wrap">
-            <Text color={C.accent}>◆ </Text>
-            <Text dimColor>ctx </Text>
-            <Text color={ctxColor}>{on1}</Text>
-            <Text color={C.rule}>{off1}</Text>
-            <Text color={ctxColor} bold>
-              {' '}
-              {m.percent ?? 0}%
-            </Text>
-            {!isNarrow && m.tokens !== undefined && (
-              <Text dimColor>
-                {' '}
-                {k(m.tokens)}/{k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}
-              </Text>
-            )}
-            {!isNarrow && m.delta ? (
-              <Text dimColor>
-                {' '}
-                {m.delta > 0 ? '+' : ''}
-                {k(m.delta)}
-              </Text>
-            ) : null}
-            {ctx >= 0.9 && <Text color={C.hot}> ⚠ compacts soon</Text>}
-            {limits.map(x => {
-              const c = tone(x.percent / 100, 0.7, 0.9)
-              const [a, b] = bar(x.percent / 100, 5, '▰', '▱')
-              return (
-                <Box flexDirection="row">
-                  {sep}
-                  <Text dimColor>{limitLabel(x.kind)} </Text>
-                  <Text color={c}>{a}</Text>
-                  <Text color={C.rule}>{b}</Text>
-                  <Text color={c}> {x.percent}%</Text>
-                  <Text dimColor> {resetIn(x, now)}</Text>
+          <Box flexDirection="row" gap={1}>
+            <Box width={meterCells} flexShrink={0} flexDirection="row" flexWrap="wrap">
+              {card ?? (
+                <Box flexDirection="row" flexWrap="wrap">
+                  <Text color={C.accent}>◆ </Text>
+                  <Text dimColor>ctx </Text>
+                  <Text color={ctxColor}>{on1}</Text>
+                  <Text color={C.rule}>{off1}</Text>
+                  <Text color={ctxColor} bold>
+                    {' '}
+                    {m.percent ?? 0}%
+                  </Text>
+                  {!isNarrow && m.tokens !== undefined && (
+                    <Text dimColor>
+                      {' '}
+                      {k(m.tokens)}/{k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}
+                    </Text>
+                  )}
+                  {!isNarrow && m.delta ? (
+                    <Text dimColor>
+                      {' '}
+                      {m.delta > 0 ? '+' : ''}
+                      {k(m.delta)}
+                    </Text>
+                  ) : null}
+                  {ctx >= 0.9 && <Text color={C.hot}> ⚠ compacts soon</Text>}
+                  {limits.map(x => {
+                    const c = tone(x.percent / 100, 0.7, 0.9)
+                    const [a, b] = bar(x.percent / 100, 5, '▰', '▱')
+                    return (
+                      <Box flexDirection="row">
+                        {sep}
+                        <Text dimColor>{limitLabel(x.kind)} </Text>
+                        <Text color={c}>{a}</Text>
+                        <Text color={C.rule}>{b}</Text>
+                        <Text color={c}> {x.percent}%</Text>
+                        <Text dimColor> {resetIn(x, now)}</Text>
+                      </Box>
+                    )
+                  })}
+                  {!isNarrow && m.usd !== undefined && (
+                    <Box flexDirection="row">
+                      {sep}
+                      <Text dimColor>${m.usd.toFixed(2)}</Text>
+                    </Box>
+                  )}
                 </Box>
-              )
-            })}
-            {!isNarrow && m.usd !== undefined && (
-              <Box flexDirection="row">
-                {sep}
-                <Text dimColor>${m.usd.toFixed(2)}</Text>
-              </Box>
-            )}
-            <Text> </Text>
-            {chip}
-            <Text> </Text>
-            {strip_.ticks}
-            <Text> </Text>
-            {gear}
+              )}
+            </Box>
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              {chip}
+              {ticks}
+              {finder}
+              {gear}
+            </Box>
           </Box>
         )
       )
@@ -1006,6 +1056,7 @@ export const register: Register = on => {
     )
 
     const picker = await drawInlinePicker($, e)
+    const search = await drawSearch($, e)
 
     return (
       <Box flexDirection="column">
@@ -1013,7 +1064,7 @@ export const register: Register = on => {
         {meterRow}
         {picker}
         {liveRow}
-        {strip_.cards}
+        {search}
       </Box>
     )
   })
@@ -1327,8 +1378,15 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
         <Client
           key="model-track"
           module="./slider.tsx"
-          props={{ labels: s.models.slots.map(slotLabel), locked: s.models.slots.map(x => isLocked(x, s.models)), active: at, accent: CLAUDE, compact: true }}
-          width={(n - 1) * 3 + 1}
+          props={{
+            labels: s.models.slots.map(slotLabel),
+            locked: s.models.slots.map(x => isLocked(x, s.models)),
+            active: at,
+            accent: CLAUDE,
+            compact: true,
+            rail: (c.theme ?? '').startsWith('light') ? '#dcdce0' : '#3a3b40',
+          }}
+          width={(n - 1) * 3 + 3}
         />
       )}
       <Button
@@ -1403,36 +1461,53 @@ const entryCard = (x: Entry, now: number) =>
     .filter(Boolean)
     .join(' · ')
 
-// The strip: a tick per prompt; hovering one shows its line in the band, a
-// press scrolls back to it.
+const STRIP_MAX = 16
+
+// The strip: a tick per prompt, drawn by a Client so its ticks are colored,
+// easy to hit, and tell the band which one the pointer is on.
 async function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
-  if (!(await read($, settings)).timeline.isStrip) return { ticks: null, cards: null }
-  const list = (await read($, timeline)).slice(-24)
-  if (!list.length) return { ticks: null, cards: null }
+  if (!(await read($, settings)).timeline.isStrip) return null
+  const list = (await read($, timeline)).slice(-STRIP_MAX)
+  if (!list.length) return null
+  const Client =
+    e.surface === 'terminal' || e.surface === 'desktop'
+      ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client
+      : undefined
+  if (!Client) return null
+  return <Client key="tl-strip" module="./ticks.tsx" props={{ colors: list.map(statusColor) }} width={list.length * 2} />
+}
+
+// Find an earlier prompt from the band: type words, Enter jumps to the latest
+// prompt holding them.
+async function drawSearch($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
+  if (!(await read($, isSearchOpen))) return null
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const Input = e.surface === 'mobile' ? undefined : ($.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }).Input
+  if (!Input) return null
+  return (
+    <Box flexDirection="row" gap={1} alignItems="center">
+      <Text color={C.accent}>⌕</Text>
+      <Input key="find-input" placeholder="find an earlier prompt…" submitLabel="Jump" autoFocus onSubmit={value => void findAndJump($, value)} />
+      <Button key="find-close" label="✕" plain dimColor onPress={() => update($, isSearchOpen, () => false)} />
+    </Box>
+  )
+}
+
+// The hovered tick's line, drawn where the meters were.
+async function drawStripCard($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
+  const id = await read($, stripHover)
+  if (!id) return null
+  const x = (await read($, timeline)).find(y => y.id === id)
+  if (!x) return null
   const { Box, Text } = $.ui.resolve(e)
-  const now = await $.clock.now()
-  const ticks = (
+  return (
     <Box flexDirection="row">
-      {list.map(x => (
-        <Text color={statusColor(x)} hover={{ scope: `tl-${x.id}`, bold: true }}>
-          ▮
-        </Text>
-      ))}
+      <Text color={statusColor(x)}>▍ </Text>
+      <Text wrap="truncate">
+        {clock(x.at)} {entryCard(x, await $.clock.now())}
+      </Text>
     </Box>
   )
-  const cards = (
-    <Box flexDirection="column">
-      {list.map(x => (
-        <Box display="none" hover={{ scope: `tl-${x.id}`, display: 'flex' }} flexDirection="row">
-          <Text color={statusColor(x)}>▍ </Text>
-          <Text dimColor wrap="truncate">
-            {clock(x.at)} {entryCard(x, now)}
-          </Text>
-        </Box>
-      ))}
-    </Box>
-  )
-  return { ticks, cards }
 }
 
 const PILL_FILL = '#e9b949'

@@ -350,7 +350,7 @@ test('the slider switches model and effort, and keeps Fable locked without Max',
   // The band keeps a small track and the name; the name opens the picker inside the band.
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await band.find({ key: 'model-chip' })).toBeDefined()
-  expect((await band.find({ type: 'Client' }))?.props.width).toBe(13)
+  expect((await band.find({ key: 'model-track' }))?.props.width).toBe(15)
   expect(await band.find({ key: 'pick-0' })).toBeUndefined()
   await band.press({ key: 'model-chip' })
   expect(await band.find({ key: 'pick-0' })).toBeDefined()
@@ -443,12 +443,13 @@ test('dragging the band track across stops switches on release', async ($, on) =
   on('session.surfaces', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  await ui.resize({ columns: 13, rows: 1 })
-  // The band's track: a stop every three cells. Press on 1, drag to 4, let go.
-  await ui.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
-  await ui.pointer({ type: 'move', x: 5, y: 0, button: 'left' })
-  await ui.pointer({ type: 'move', x: 9, y: 0, button: 'left' })
-  await ui.pointer({ type: 'up', x: 9, y: 0, button: 'left' })
+  await ui.resize({ columns: 15, rows: 1, in: 'model-track' })
+  // The band's capsule: a cap cell, then a stop every three cells. Press on 1,
+  // drag to 4, let go.
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'model-track' })
+  await ui.pointer({ type: 'move', x: 6, y: 0, button: 'left', in: 'model-track' })
+  await ui.pointer({ type: 'move', x: 10, y: 0, button: 'left', in: 'model-track' })
+  await ui.pointer({ type: 'up', x: 10, y: 0, button: 'left', in: 'model-track' })
   await clock.advance(1)
   expect(ran).toEqual(['/model opus', '/effort xhigh'])
   await ui.unmount()
@@ -470,6 +471,12 @@ test('a press on a position in the band picker switches and closes it', async ($
 
 test('the timeline marks messages and fills the strip', async ($, on) => {
   engine(on)
+  const scrolled: string[] = []
+  on('ui.scroll', (_$, e) => {
+    scrolled.push((e as { to?: { requestId?: string } }).to?.requestId ?? '')
+    return {}
+  })
+  toasts.length = 0
   // The engine's own row, drawn when the plugin passes.
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine row'] }) as never)
   on('session.surfaces', () => ({ value: ['desktop'] }))
@@ -492,7 +499,18 @@ test('the timeline marks messages and fills the strip', async ($, on) => {
   await ui.unmount()
 
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await band.findAll({ type: 'Text', text: '▮' })).length).toBe(1)
+  expect((await band.find({ key: 'tl-strip' }))?.props.width).toBe(2)
+  expect(await band.find({ type: 'Svg' })).toBeDefined()
+  // Hovering a tick swaps the meters for its line; nothing else moves.
+  await band.pointer({ type: 'move', x: 0, y: 0, in: 'tl-strip' })
+  expect(await band.find({ type: 'Svg' })).toBeUndefined()
+  expect((await band.findAll({ type: 'Text' })).map(t => t.text).join('|')).toMatch(/fix the band layout · 4s/)
+  await band.pointer({ type: 'leave', x: 0, y: 0, in: 'tl-strip' })
+  expect(await band.find({ type: 'Svg' })).toBeDefined()
+  // A press jumps back to it (this line came from turn.start: no message id to scroll to).
+  await band.pointer({ type: 'down', x: 0, y: 0, button: 'left', in: 'tl-strip' })
+  expect(scrolled).toEqual([])
+  expect(toasts.some(t => /no message to jump to/.test(t))).toBe(true)
   await band.unmount()
 
   await run($, 'marks off')
@@ -531,4 +549,29 @@ test('a narrow band keeps the model controls and drops the notes first', async (
   const wide = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: 220 } })
   expect(String((await wide.find({ type: 'Svg' }))?.props.source)).toMatch(/95k \/ 200k/)
   await wide.unmount()
+})
+
+test('/gauge find jumps to the latest earlier prompt holding the words', async ($, on) => {
+  engine(on)
+  const scrolled: string[] = []
+  on('ui.scroll', (_$, e) => {
+    scrolled.push((e as { to?: { requestId?: string } }).to?.requestId ?? '')
+    return {}
+  })
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  await measured($, measure(60_000, 10))
+  for (const [id, text] of [['a', 'start Phase K'], ['b', 'finish Phase K and push'], ['c', 'now look at phase k again']] as const) {
+    await $.turn.start({ text, turnId: id })
+    await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: id, reason: 'answer' })
+  }
+  expect((await run($, 'find phase k and push')).text).toMatch(/finish Phase K and push/)
+  expect(scrolled).toEqual([])  // turn-started lines have no message to scroll to
+  expect((await run($, 'find nothing like this')).text).toMatch(/No earlier prompt/)
+  // The band's search row: Enter finds the latest match.
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await band.press({ key: 'find' })
+  await band.input({ key: 'find-input', text: 'phase k' })
+  expect(toasts.some(t => /no message to jump to/.test(t))).toBe(true)
+  await band.unmount()
 })

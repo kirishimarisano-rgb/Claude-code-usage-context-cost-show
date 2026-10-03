@@ -134,6 +134,8 @@ declare module 'claude-code' {
       timeline: Entry[]
       settingsTab: SettingsTab
       isPickerOpen: boolean
+      stripHover: string | null
+      isSearchOpen: boolean
     }
   }
 }

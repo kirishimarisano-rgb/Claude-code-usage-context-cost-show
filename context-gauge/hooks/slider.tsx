@@ -11,6 +11,8 @@ type Props = {
   accent: string
   // A bare track for the band: a stop every three cells, no labels.
   compact?: boolean
+  // The compact track's unfilled color, matched to the theme.
+  rail?: string
 }
 
 const STEP = 3
@@ -21,7 +23,7 @@ const Slider: ClientModule<Props, State> = (p, s) => {
   const { Box, Text } = s.elements
   const n = Math.max(1, p.labels.length)
   const slotAt = (x: number) =>
-    Math.max(0, Math.min(n - 1, p.compact ? Math.round(x / STEP) : Math.floor(x / Math.max(1, s.columns / n))))
+    Math.max(0, Math.min(n - 1, p.compact ? Math.round((x - 1) / STEP) : Math.floor(x / Math.max(1, s.columns / n))))
 
   if (s.state === undefined) {
     s.setState({ drag: null })
@@ -44,21 +46,28 @@ const Slider: ClientModule<Props, State> = (p, s) => {
   const shown = s.state?.drag ?? p.active
 
   if (p.compact) {
-    // ●━━○──○──⊘ : filled up to the chosen stop in the accent, the rest dim.
+    // A capsule: filled in the accent up to the knob, a white knob, the rest a
+    // dim rail; half blocks round the two ends.
+    const rail = p.rail ?? '#3a3b40'
+    const at = shown ?? -1
+    const cells: { ch: string; fg?: string; bg: string; bold?: boolean }[] = []
+    for (let i = 0; i < n; i++) {
+      const bg = i <= at ? p.accent : rail
+      const mark = i === at ? '●' : p.locked[i] ? '⊘' : '·'
+      const fg = i === at ? '#ffffff' : i < at ? '#f3d9cf' : '#8a8d94'
+      if (i > 0) cells.push({ ch: ' ', bg: i <= at ? p.accent : rail })
+      cells.push({ ch: mark, fg, bg, bold: i === at })
+      if (i < n - 1) cells.push({ ch: ' ', bg: i < at ? p.accent : rail })
+    }
     return (
       <Box flexDirection="row">
-        {p.labels.map((_, i) => {
-          const isOn = i === shown
-          const isBefore = shown !== null && shown !== undefined && i < shown
-          const stop = isOn ? '●' : p.locked[i] ? '⊘' : '○'
-          const rail = i === n - 1 ? '' : shown !== null && shown !== undefined && i < shown ? '━━' : '──'
-          return (
-            <Box flexDirection="row">
-              {isOn || isBefore ? <Text color={p.accent}>{stop}</Text> : <Text dimColor>{stop}</Text>}
-              {isBefore ? <Text color={p.accent}>{rail}</Text> : <Text dimColor>{rail}</Text>}
-            </Box>
-          )
-        })}
+        <Text color={at >= 0 ? p.accent : rail}>▐</Text>
+        {cells.map(c => (
+          <Text color={c.fg} backgroundColor={c.bg} bold={c.bold}>
+            {c.ch}
+          </Text>
+        ))}
+        <Text color={rail}>▌</Text>
       </Box>
     )
   }

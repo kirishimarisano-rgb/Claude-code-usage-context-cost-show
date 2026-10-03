@@ -14,8 +14,8 @@ Desktop 和手機 app 畫一行高的 SVG 細條（上方是輸入框上的細�
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
-- **模型切換**：細條上一個可拖的小滑塊 `●━━○──○──○──⊘`（Claude 橘色）加模型名稱；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
-- **時間軸**（設定頁可各自開關）：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片：那句話的開頭、耗時、工具數、改過的檔案；細條上一排小刻度，滑鼠停上去在細條內顯示同樣的內容；也可另外打開側邊面板。AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
+- **模型切換**：細條上一個可拖的膠囊滑塊（Claude 橘色填到目前檔位、白色圓鈕）加模型名稱；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
+- **時間軸**（設定頁可各自開關）：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片：那句話的開頭、耗時、工具數、改過的檔案；細條上一排小刻度（每格兩字寬），滑鼠停上去，用量那一段暫時換成那則訊息的內容（版面不動），點一下跳回那段對話；細條上的 ⌕ 可輸入關鍵字，跳到最近一則提到它的訊息（也可用 `/gauge find <關鍵字>`）；也可另外打開側邊面板。AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
 - **You should know**：Anthropic 內建的側邊 agent（`cc-plugin-you-should-know@builtin`），可在設定頁一鍵開關。
 - **設定頁**：`/gauge settings`，或細條旁的 ⚙；分成 Usage / Models / Timeline / Display 四頁
 
@@ -66,6 +66,7 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge ysk on\|off` | You should know 側邊 agent |
 | `/gauge timeline` | 時間軸 |
 | `/gauge summary on\|off` | 時間軸的 AI 摘要（會用 token） |
+| `/gauge find <關鍵字>` | 跳到最近一則提到它的訊息 |
 | `/gauge marks on\|off` | 訊息上的時間軸色線 |
 | `/gauge strip on\|off` | 細條上的時間軸刻度 |
 | `/gauge footer auto\|on\|off` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |
