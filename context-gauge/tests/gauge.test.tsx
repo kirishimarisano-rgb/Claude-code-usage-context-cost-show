@@ -264,6 +264,7 @@ test('display style and text size are set from the settings page', async ($, on)
   expect(classic).toMatch(/>Context</)
   expect(classic).toMatch(/scale\(1\.18\)/)
   const ui = await $.ui.mount({ ...row, surface: 'desktop' })
+  await ui.press({ key: 'tab-display' })
   await ui.press({ key: 'look-style' })
   await ui.press({ key: 'look-size-up' })
   await ui.unmount()
@@ -318,5 +319,116 @@ test('the pane lists the context breakdown with numbers and recent turns as text
   expect(texts).not.toMatch(/Free space/)
   expect(texts).toMatch(/● \|3s/)
   expect(texts).not.toMatch(/[▁▂▃▄▅▆▇█]/)
+  await ui.unmount()
+})
+
+// Commands the plugin ran, as `/name args`; each answers with a line of text.
+function commands(on: On) {
+  const ran: string[] = []
+  on('command.run', (_$, e) => {
+    ran.push(`/${e.command} ${e.args}`.trim())
+    return { text: e.command === 'fast' ? 'Fast mode ON' : `ran ${e.command}` }
+  })
+  return ran
+}
+
+test('the slider switches model and effort, and keeps Fable locked without Max', async ($, on) => {
+  const clock = engine(on)
+  const ran = commands(on)
+  toasts.length = 0
+  on('session.surfaces', () => ({ value: [] }))
+  on('config.list', () => ({ value: [] }))
+  await measured($, measure(60_000, 10))
+
+  // Desktop draws the draggable Client; a release on position 3 switches.
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const slider = await ui.find({ type: 'Client' })
+  expect(String(slider?.props.module)).toMatch(/slider\.tsx$/)
+  expect((slider?.props.props as { labels: string[] }).labels).toEqual(['Sonnet low', 'Sonnet high', 'Opus med', 'Opus xhigh', 'Fable high'])
+  await ui.unmount()
+
+  await run($, 'model 3')
+  await clock.advance(1)
+  expect(ran).toEqual(['/model opus', '/effort medium'])
+
+  await run($, 'model 5')
+  await clock.advance(1)
+  expect(ran).toHaveLength(2)
+  expect(toasts.some(t => /Fable high is for Max plans/.test(t))).toBe(true)
+
+  await run($, 'max on')
+  await run($, 'model 5')
+  await clock.advance(1)
+  expect(ran.slice(2)).toEqual(['/model fable', '/effort high'])
+
+  await run($, 'fast')
+  await clock.advance(1)
+  expect(ran[4]).toBe('/fast')
+  expect(toasts.some(t => /Fast mode ON/.test(t))).toBe(true)
+})
+
+test('the slider can be hidden, and mobile gets buttons in the /gauge row', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(60_000, 10))
+  const row = {
+    plugin: 'context-gauge',
+    component: 'CommandOutput',
+    props: { command: 'gauge', args: '', text: '', isErrored: false },
+  } as const
+  const phone = await $.ui.mount({ ...row, surface: 'mobile' })
+  expect(await phone.find({ key: 'model-0' })).toBeDefined()
+  await phone.unmount()
+  await run($, 'models off')
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await band.find({ type: 'Client' })).toBeUndefined()
+  await band.unmount()
+})
+
+test('each prompt becomes a timeline line, colored by how its turn ended', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'no surface places panes' } }))
+  await measured($, measure(60_000, 10))
+
+  await $.turn.start({ text: 'fix the band layout', turnId: 'a' })
+  await $.turn.complete({ answer: 'done', durationMs: 4000, isAborted: false, turnId: 'a', reason: 'answer' })
+  await $.turn.start({ text: 'run the tests', turnId: 'b' })
+  await $.turn.complete({ answer: '', durationMs: 2000, isAborted: true, turnId: 'b', reason: 'aborted' })
+  await $.turn.start({ text: 'deploy', turnId: 'c' })
+  await $.turn.complete({ answer: '', durationMs: 1000, isAborted: false, turnId: 'c', reason: 'error' })
+
+  const text = (await run($, 'timeline')).text
+  expect(text).toMatch(/🔴 .* deploy/)
+  expect(text).toMatch(/🟡 .* run the tests/)
+  expect(text).toMatch(/🟢 .* fix the band layout/)
+
+  const pane = {
+    plugin: 'context-gauge',
+    component: 'Pane',
+    requestId: 'gauge-timeline',
+    props: { title: 'Timeline', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+  } as const
+  const ui = await $.ui.mount({ ...pane, surface: 'desktop' })
+  expect(await ui.find({ key: 'tl-turn-a' })).toBeDefined()
+  expect((await ui.find({ key: 'tl-turn-b' }))?.text).toBe('run the tests')
+  await ui.unmount()
+})
+
+test('dragging the slider across positions switches on release', async ($, on) => {
+  const clock = engine(on)
+  const ran = commands(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(60_000, 10))
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await ui.resize({ columns: 70, rows: 1 })
+  // Five positions over 70 cells: 14 each. Press on 1, drag to 4, let go.
+  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left' })
+  await ui.pointer({ type: 'move', x: 30, y: 0, button: 'left' })
+  await ui.pointer({ type: 'move', x: 45, y: 0, button: 'left' })
+  await ui.pointer({ type: 'up', x: 45, y: 0, button: 'left' })
+  await clock.advance(1)
+  expect(ran).toEqual(['/model opus', '/effort xhigh'])
   await ui.unmount()
 })

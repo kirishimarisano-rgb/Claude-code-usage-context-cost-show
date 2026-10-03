@@ -1,11 +1,42 @@
 import { atom, read, update } from 'claude-code'
-import type { ElementConstructor, EngineInterface, Register, RenderInput, SessionRateLimit, SvgProps, Timer } from 'claude-code'
+import type {
+  ClientProps,
+  ElementConstructor,
+  EngineInterface,
+  Register,
+  RenderChildren,
+  RenderInput,
+  SessionRateLimit,
+  SvgProps,
+  Timer,
+} from 'claude-code'
 
 import { alt, PALETTE, readings, stack, strip } from './svg'
-import type { CompactMode, FooterMode, GaugeSettings, Limit, Live, Look, LookStyle, Meter, Phase, ToolRow, TurnRow, WrapRule } from '../types'
+import type {
+  CompactMode,
+  Current,
+  EffortName,
+  Entry,
+  FooterMode,
+  GaugeSettings,
+  Limit,
+  Live,
+  Look,
+  LookStyle,
+  Meter,
+  ModelPrefs,
+  Phase,
+  SettingsTab,
+  Slot,
+  ToolRow,
+  TurnRow,
+  WrapRule,
+} from '../types'
 
 const PANE = 'gauge'
 const SETTINGS_PANE = 'gauge-settings'
+const TIMELINE_PANE = 'gauge-timeline'
+const YSK = 'cc-plugin-you-should-know@builtin'
 
 const DEFAULTS: GaugeSettings = {
   wrap5h: { isOn: false, at: 90 },
@@ -13,6 +44,18 @@ const DEFAULTS: GaugeSettings = {
   compact: { mode: 'remind', at: 70 },
   footer: 'auto',
   look: { style: 'classic', size: 'm' },
+  models: {
+    isShown: true,
+    hasMax: false,
+    slots: [
+      { model: 'sonnet', effort: 'low' },
+      { model: 'sonnet', effort: 'high' },
+      { model: 'opus', effort: 'medium' },
+      { model: 'opus', effort: 'xhigh' },
+      { model: 'fable', effort: 'high' },
+    ],
+  },
+  timeline: { isAiSummary: false },
 }
 
 const meter = atom({ plugin: 'context-gauge', key: 'meter' } as const, null)
@@ -25,6 +68,14 @@ const tick = atom({ plugin: 'context-gauge', key: 'tick' } as const, 0)
 // The context percent the /compact rule last acted at; cleared once the
 // context drops below the rule again (after a compaction).
 const compactAt = atom({ plugin: 'context-gauge', key: 'compactAt' } as const, null as number | null)
+const current = atom({ plugin: 'context-gauge', key: 'current' } as const, {
+  slot: null,
+  fast: null,
+  styles: [],
+  youShouldKnow: null,
+} as Current)
+const timeline = atom({ plugin: 'context-gauge', key: 'timeline' } as const, [] as Entry[])
+const settingsTab = atom({ plugin: 'context-gauge', key: 'settingsTab' } as const, 'usage' as SettingsTab)
 
 const WRAP_DELAY_MS = 10_000
 const NOTIFY_AFTER_MS = 20_000
@@ -184,6 +235,8 @@ async function loadSettings($: EngineInterface) {
     footer:
       saved?.footer ?? (oldFooter === 'on' || oldFooter === 'off' || oldFooter === 'auto' ? oldFooter : DEFAULTS.footer),
     look: saved?.look ?? DEFAULTS.look,
+    models: { ...DEFAULTS.models, ...saved?.models },
+    timeline: { ...DEFAULTS.timeline, ...saved?.timeline },
   }
   await update($, settings, () => s)
 }
@@ -283,6 +336,164 @@ async function checkCompact($: EngineInterface) {
   }
 }
 
+// ---------- models and modes ----------
+
+const MODEL_CHOICES = ['haiku', 'sonnet', 'opus', 'fable', 'sonnet[1m]', 'opus[1m]', 'fable[1m]']
+const EFFORTS: EffortName[] = ['low', 'medium', 'high', 'xhigh', 'max']
+const EFFORT_SHORT: Record<EffortName, string> = { low: 'low', medium: 'med', high: 'high', xhigh: 'xhigh', max: 'max' }
+
+const modelLabel = (m: string) => {
+  const base = m.replace('[1m]', '')
+  return base.charAt(0).toUpperCase() + base.slice(1) + (m.endsWith('[1m]') ? ' 1M' : '')
+}
+const slotLabel = (slot: Slot) => `${modelLabel(slot.model)} ${EFFORT_SHORT[slot.effort]}`
+const isLocked = (slot: Slot, prefs: ModelPrefs) => slot.model.startsWith('fable') && !prefs.hasMax
+
+// A request's model id ('claude-opus-5-5') to the family a slot names ('opus').
+const familyOf = (id?: string) =>
+  !id ? undefined
+  : /fable/i.test(id) ? 'fable'
+  : /opus/i.test(id) ? 'opus'
+  : /sonnet/i.test(id) ? 'sonnet'
+  : /haiku/i.test(id) ? 'haiku'
+  : undefined
+
+// The slot the session runs on: the one switched to here, else one matching the last request.
+function activeSlot(c: Current, prefs: ModelPrefs) {
+  if (c.slot !== null) return c.slot
+  const family = familyOf(c.model)
+  const i = prefs.slots.findIndex(x => x.model.replace('[1m]', '') === family && x.effort === c.effort)
+  return i === -1 ? null : i
+}
+
+const firstLine = (text: string | undefined) => (text ?? '').split('\n').find(l => l.trim())?.trim().slice(0, 140) ?? ''
+
+// Switching runs the built-in commands, which cannot run inside a command's
+// own hook: the /gauge forms defer them past it.
+const later = ($: EngineInterface, fn: () => Promise<void>) => void $.clock.after(0, () => void fn())
+
+async function applySlot($: EngineInterface, i: number) {
+  const s = await read($, settings)
+  const slot = s.models.slots[i]
+  if (!slot) return
+  if (isLocked(slot, s.models)) {
+    $.ui.toast(`${slotLabel(slot)} is for Max plans. On Max? Unlock it in /gauge settings → Models.`, { timeoutMs: 7000 })
+    return
+  }
+  try {
+    await $.command.run({ command: 'model', args: slot.model })
+    await $.command.run({ command: 'effort', args: slot.effort })
+    await update($, current, c => ({ ...c, slot: i, model: slot.model, effort: slot.effort }))
+    $.ui.toast(`→ ${slotLabel(slot)}`)
+  } catch (error) {
+    $.ui.toast(`Could not switch to ${slotLabel(slot)} (${String(error).slice(0, 80)})`, { timeoutMs: 7000 })
+  }
+}
+
+async function toggleFast($: EngineInterface) {
+  try {
+    const r = await $.command.run({ command: 'fast' })
+    const text = firstLine(r.text)
+    const isOn = /unavailable|\boff\b|disabled/i.test(text) ? false : /\bon\b|enabled/i.test(text) ? true : null
+    await update($, current, c => ({ ...c, fast: isOn ?? (c.fast === null ? null : !c.fast) }))
+    $.ui.toast(text || 'Fast mode toggled', { timeoutMs: 6000 })
+  } catch (error) {
+    $.ui.toast(`Fast mode did not change (${String(error).slice(0, 80)})`, { timeoutMs: 7000 })
+  }
+}
+
+async function youShouldKnowOn($: EngineInterface) {
+  try {
+    const enabled = (await $.settings.read()).enabledPlugins as Record<string, unknown> | undefined
+    return enabled?.[YSK] === true
+  } catch {
+    return null
+  }
+}
+
+async function loadModes($: EngineInterface) {
+  const rows = await $.config.list()
+  const style = rows.find(r => r.key === 'outputStyle')
+  const ysk = await youShouldKnowOn($)
+  await update($, current, c => ({
+    ...c,
+    outputStyle: style ? String(style.value) : c.outputStyle,
+    styles: style?.options ? [...style.options] : c.styles,
+    youShouldKnow: ysk,
+  }))
+}
+
+async function setStyle($: EngineInterface, wanted?: string) {
+  const c = await read($, current)
+  const list = c.styles.length ? c.styles : ['default', 'Concise', 'Explanatory', 'Learning']
+  const next =
+    wanted !== undefined
+      ? list.find(x => x.toLowerCase() === wanted.toLowerCase())
+      : list[(Math.max(0, list.indexOf(c.outputStyle ?? 'default')) + 1) % list.length]
+  if (!next) return `Output styles: ${list.join(', ')}.`
+  try {
+    await $.config.set({ key: 'outputStyle', value: next })
+    await update($, current, x => ({ ...x, outputStyle: next }))
+    return `Output style: ${next}.`
+  } catch (error) {
+    return `Output style did not change (${String(error).slice(0, 80)}).`
+  }
+}
+
+async function setYouShouldKnow($: EngineInterface, isOn: boolean) {
+  try {
+    const r = await $.command.run({ command: 'plugin', args: `${isOn ? 'enable' : 'disable'} ${YSK}` })
+    await update($, current, c => ({ ...c, youShouldKnow: isOn }))
+    $.ui.toast(firstLine(r.text) || `You should know ${isOn ? 'on' : 'off'}`, { timeoutMs: 6000 })
+    const actual = await youShouldKnowOn($)
+    if (actual !== null) await update($, current, c => ({ ...c, youShouldKnow: actual }))
+  } catch (error) {
+    $.ui.toast(`You should know did not change (${String(error).slice(0, 80)})`, { timeoutMs: 7000 })
+  }
+}
+
+// ---------- timeline ----------
+
+const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path
+const clock = (at: number) => {
+  const d = new Date(at)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const updateRunning = ($: EngineInterface, fn: (x: Entry) => Entry) =>
+  update($, timeline, list => {
+    const i = list.map(x => x.status).lastIndexOf('running')
+    return i === -1 ? list : list.map((x, j) => (j === i ? fn(x) : x))
+  })
+
+async function summarize($: EngineInterface, id: string, prompt: string, answer: string) {
+  const r = await $.model.complete({
+    model: 'haiku',
+    effort: 'low',
+    maxTokens: 60,
+    prompt: [
+      'In one short line (at most 12 words, in the language of the request), say what was done.',
+      `Request: ${prompt.slice(0, 600)}`,
+      `Result: ${answer.slice(0, 1500)}`,
+    ].join('\n'),
+  })
+  if (r.isAnswered && r.text.trim()) {
+    await update($, timeline, list => list.map(x => (x.id === id ? { ...x, summary: firstLine(r.text) } : x)))
+  }
+}
+
+const openTimeline = ($: EngineInterface) => $.ui.open({ id: TIMELINE_PANE, title: 'Timeline' })
+
+async function jumpTo($: EngineInterface, id: string) {
+  if (id.startsWith('turn-')) {
+    $.ui.toast('This line has no message to jump to.', { timeoutMs: 4000 })
+    return
+  }
+  const r = await $.ui.scroll({ to: { requestId: id }, block: 'start' })
+  if (r.deny) $.ui.toast(`Could not jump there (${r.deny})`, { timeoutMs: 5000 })
+}
+
 // ---------- actions ----------
 
 async function stopTurn($: EngineInterface) {
@@ -307,6 +518,14 @@ const COMMANDS = [
   '/gauge footer auto|on|off  line under each answer',
   '/gauge look classic|minimal|terminal  display style',
   '/gauge size s|m|l          text size',
+  '/gauge model 1-5           switch to a slider position',
+  '/gauge models on|off       show or hide the model slider',
+  '/gauge max on|off          you have a Max plan (unlocks Fable)',
+  '/gauge fast                toggle fast mode',
+  '/gauge style [name]        next output style, or one by name',
+  '/gauge ysk on|off          the You should know side agent',
+  '/gauge timeline            the session timeline',
+  '/gauge summary on|off      AI summaries on the timeline (uses tokens)',
 ].join('\n')
 
 // ---------- hooks ----------
@@ -315,16 +534,24 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'gauge',
-      description: 'Usage gauge; `pane`, `settings`, `wrap 5h|7d <percent|on|off>`, `compact <percent|remind|auto|off>`',
-      argumentHint: '[pane | settings | wrap 5h|7d … | compact … | footer …]',
+      description: 'Usage gauge; `pane`, `settings`, `timeline`, `model 1-5`, `fast`, `style`, `wrap …`, `compact …`',
+      argumentHint: '[pane | settings | timeline | model 1-5 | fast | style … | wrap … | compact …]',
     })
     await loadSettings($)
     await update($, wrap, w => ({ ...w, pending: null }))
     const collapsed = await $.store.get('isCollapsed')
     if (typeof collapsed === 'boolean') await update($, isCollapsed, () => collapsed)
     await refreshBreakdown($)
+    await loadModes($)
 
     return next(e)
+  })
+
+  // The model slider's Client posts the position the person let go on.
+  on('ui.message', { element: 'model-slider' }, async ($, e) => {
+    const slot = (e.data as { slot?: unknown } | null)?.slot
+    if (typeof slot === 'number') later($, () => applySlot($, slot))
+    return {}
   })
 
   on('command.run', { command: 'gauge' }, async ($, e) => {
@@ -364,6 +591,38 @@ export const register: Register = on => {
       await changeSettings($, x => ({ ...x, look: { ...x.look, size: a } }))
       return { text: `Text size: ${a.toUpperCase()}.` }
     }
+    if (sub === 'model') {
+      const i = Number(a) - 1
+      const slot = (await read($, settings)).models.slots[i]
+      if (!slot) return { text: 'Use /gauge model 1-5.' }
+      later($, () => applySlot($, i))
+      return { text: `Switching to ${slotLabel(slot)}.` }
+    }
+    if (sub === 'models' && (a === 'on' || a === 'off')) {
+      await changeSettings($, x => ({ ...x, models: { ...x.models, isShown: a === 'on' } }))
+      return { text: `Model slider ${a}.` }
+    }
+    if (sub === 'max' && (a === 'on' || a === 'off')) {
+      await changeSettings($, x => ({ ...x, models: { ...x.models, hasMax: a === 'on' } }))
+      return { text: a === 'on' ? 'Max plan: Fable positions unlocked.' : 'Fable positions locked.' }
+    }
+    if (sub === 'fast') {
+      later($, () => toggleFast($))
+      return { text: 'Toggling fast mode.' }
+    }
+    if (sub === 'style') return { text: await setStyle($, e.args.trim().split(/\s+/)[1]) }
+    if (sub === 'ysk' && (a === 'on' || a === 'off')) {
+      later($, () => setYouShouldKnow($, a === 'on'))
+      return { text: `Turning You should know ${a}.` }
+    }
+    if (sub === 'summary' && (a === 'on' || a === 'off')) {
+      await changeSettings($, x => ({ ...x, timeline: { isAiSummary: a === 'on' } }))
+      return { text: `AI summaries on the timeline: ${a}.` }
+    }
+    if (sub === 'timeline') {
+      const opened = await openTimeline($)
+      return { text: opened.isPlaced ? 'Timeline opened.' : await timelineText($) }
+    }
     if (sub === 'pane') {
       const opened = await $.ui.open({ id: PANE, title: 'Gauge' })
       return { text: opened.isPlaced ? 'Gauge pane opened.' : `Gauge pane waits: ${opened.reason}` }
@@ -399,6 +658,25 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Each prompt the person sends starts a line on the timeline; its row's id
+  // is what a press scrolls back to.
+  on('session.append', async ($, e, next) => {
+    const stored = await next(e)
+    if (!e.agentId && e.door === 'prompt' && e.message.type === 'user') {
+      const text = e.message.content
+        .map(b => (b.type === 'text' && typeof b.text === 'string' ? b.text : ''))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (text) {
+        const at = await $.clock.now()
+        const entry: Entry = { id: stored.uuid ?? e.uuid, text: text.slice(0, 300), at, ms: null, tools: 0, errors: 0, files: [], status: 'running' }
+        await update($, timeline, list => [...list.map(x => (x.status === 'running' ? { ...x, status: 'stopped' as const } : x)), entry].slice(-100))
+      }
+    }
+    return stored
+  })
+
   on('turn.start', async ($, e, next) => {
     const now = await $.clock.now()
     await update($, live, (): Live => ({
@@ -416,12 +694,34 @@ export const register: Register = on => {
     }))
     await ensureTicker($)
     await checkWrap($, (await $.session.usage()).rateLimits)
+    // A turn whose prompt row was not seen (or one started without one) still
+    // gets its line; such a line cannot jump back.
+    const list = await read($, timeline)
+    if (e.text.trim() && list[list.length - 1]?.status !== 'running') {
+      const entry: Entry = {
+        id: `turn-${e.turnId}`,
+        text: e.text.replace(/\s+/g, ' ').trim().slice(0, 300),
+        at: now,
+        ms: null,
+        tools: 0,
+        errors: 0,
+        files: [],
+        status: 'running',
+      }
+      await update($, timeline, x => [...x, entry].slice(-100))
+    }
 
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
     if (e.agentId) return yield* next(e)
+    const prefs = (await read($, settings)).models
+    await update($, current, c => {
+      const slot = c.slot === null ? undefined : prefs.slots[c.slot]
+      const isSame = slot && slot.model.replace('[1m]', '') === familyOf(e.model)
+      return { ...c, model: e.model, effort: e.effort === undefined ? c.effort : String(e.effort), slot: isSame ? c.slot : null }
+    })
     await shift($, 'waiting')
     let phase: Phase = 'waiting'
     let firstAt = 0
@@ -462,6 +762,13 @@ export const register: Register = on => {
     await update($, live, l =>
       l ? { ...l, tools: l.tools.map(t => (t.id === row.id ? { ...t, ms, isError } : t)) } : l,
     )
+    const path = EDITS.has(String(e.tool)) ? (e as { file_path?: unknown }).file_path : undefined
+    await updateRunning($, x => ({
+      ...x,
+      tools: x.tools + 1,
+      errors: x.errors + (isError ? 1 : 0),
+      files: typeof path === 'string' && !x.files.includes(baseName(path)) ? [...x.files, baseName(path)].slice(-6) : x.files,
+    }))
 
     return result
   })
@@ -482,6 +789,13 @@ export const register: Register = on => {
       }
       await update($, history, h => [...h, row].slice(-20))
       await update($, live, () => null)
+      const finished = await updateRunning($, x => ({
+        ...x,
+        ms: e.durationMs,
+        status: e.isAborted ? 'stopped' : e.reason === 'error' || e.reason === 'refusal' || x.errors > 0 ? 'error' : 'ok',
+      }))
+      const entry = [...finished].reverse().find(x => x.ms === e.durationMs)
+      if (entry && (await read($, settings)).timeline.isAiSummary) void summarize($, entry.id, entry.text, e.answer)
       const mode = (await read($, settings)).footer
       const isShown = mode === 'on' || (mode === 'auto' && (await $.session.surfaces()).length === 0)
       if (isShown) {
@@ -602,6 +916,8 @@ export const register: Register = on => {
         <Button key="stop" label="■ Stop" hotkey="s" onPress={() => stopTurn($)} />
         <Text> </Text>
         <Button key="pane" label="Panel" dimColor onPress={() => $.ui.open({ id: PANE, title: 'Gauge' })} />
+        <Text> </Text>
+        <Button key="timeline" label="Timeline" dimColor onPress={() => openTimeline($)} />
       </Box>
     )
 
@@ -615,10 +931,13 @@ export const register: Register = on => {
       </Box>
     )
 
+    const modelRow = await drawModelRow($, e)
+
     return (
       <Box flexDirection="column">
         {wrapRow}
         {meterRow}
+        {modelRow}
         {liveRow}
       </Box>
     )
@@ -628,6 +947,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawGauge($, e, e.props.bodyColumns))
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, ($, e) => drawSettings($, e))
+  on('ui.render', { component: 'Pane', requestId: TIMELINE_PANE }, ($, e) => drawTimeline($, e))
 
   // The /gauge rows draw live in the transcript on every client that draws
   // plugin trees: the mobile app draws no band and places no pane.
@@ -635,6 +955,7 @@ export const register: Register = on => {
     const sub = e.props.args.trim().toLowerCase()
     if (sub === '') return drawGauge($, e, e.viewport?.columns ?? 60)
     if (sub === 'settings') return drawSettings($, e)
+    if (sub === 'timeline') return drawTimeline($, e)
     return next(e)
   })
 }
@@ -716,6 +1037,8 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   const { Box, Text, Button } = $.ui.resolve(e)
   await lookOf($)
   const s = await read($, settings)
+  const c = await read($, current)
+  const tab = await read($, settingsTab)
   const auto = autoCompactPercent(await read($, meter))
 
   const head = (title: string, note: string) => (
@@ -725,6 +1048,17 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
       </Text>
       <Text dimColor>{note}</Text>
     </Box>
+  )
+
+  const row = (label: string, ...children: RenderChildren[]) => (
+    <Box flexDirection="row" gap={1}>
+      <Text>{label.padEnd(14)}</Text>
+      {children}
+    </Box>
+  )
+
+  const toggle = (key: string, isOn: boolean | null, onPress: () => unknown) => (
+    <Button key={key} label={isOn ? 'On ' : 'Off'} dimColor={!isOn} onPress={onPress} />
   )
 
   const stepper = (id: string, value: number, onStep: (d: number) => void, isOn: boolean) => (
@@ -737,81 +1071,221 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
 
   const ruleRow = (which: 'wrap5h' | 'wrap7d', label: string) => {
     const r = s[which]
-    return (
-      <Box flexDirection="row" gap={1}>
-        <Text>{label.padEnd(14)}</Text>
-        <Button
-          key={`${which}-toggle`}
-          label={r.isOn ? 'On ' : 'Off'}
-          dimColor={!r.isOn}
-          onPress={() => changeSettings($, setRule(which, { isOn: !r.isOn }))}
-        />
-        <Text dimColor>at</Text>
-        {stepper(which, r.at, d => void changeSettings($, setRule(which, { at: r.at + d })), r.isOn)}
-      </Box>
+    return row(
+      label,
+      toggle(`${which}-toggle`, r.isOn, () => changeSettings($, setRule(which, { isOn: !r.isOn }))),
+      <Text dimColor>at</Text>,
+      stepper(which, r.at, d => void changeSettings($, setRule(which, { at: r.at + d })), r.isOn),
     )
   }
 
-  return (
+  const TABS: [SettingsTab, string][] = [
+    ['usage', 'Usage'],
+    ['models', 'Models'],
+    ['timeline', 'Timeline'],
+    ['display', 'Display'],
+  ]
+  const tabs = (
+    <Box flexDirection="row" gap={1}>
+      {TABS.map(([id, label]) => (
+        <Button key={`tab-${id}`} label={label} variant={id === tab ? 'primary' : undefined} dimColor={id !== tab} onPress={() => update($, settingsTab, () => id)} />
+      ))}
+    </Box>
+  )
+
+  const setSlot = (i: number, change: Partial<Slot>) =>
+    changeSettings($, x => ({
+      ...x,
+      models: { ...x.models, slots: x.models.slots.map((slot, j) => (j === i ? { ...slot, ...change } : slot)) },
+    }))
+  const cycle = <T,>(list: readonly T[], value: T) => list[(list.indexOf(value) + 1) % list.length]!
+
+  const usage = (
     <Box flexDirection="column">
       {head('Auto wrap-up', 'A note into the running task: finish the step, save, hand off.')}
       {ruleRow('wrap5h', '5-hour limit')}
       {ruleRow('wrap7d', 'Weekly limit')}
       {head('Context', `When to /compact${auto ? ` (Claude auto-compacts at ${auto}%)` : ''}. Auto runs only while idle.`)}
-      <Box flexDirection="row" gap={1}>
-        <Text>{'/compact'.padEnd(14)}</Text>
+      {row(
+        '/compact',
         <Button
           key="compact-mode"
           label={COMPACT_LABEL[s.compact.mode].padEnd(6)}
           dimColor={s.compact.mode === 'off'}
           onPress={() => changeSettings($, x => ({ ...x, compact: { ...x.compact, mode: nextCompact[x.compact.mode] } }))}
-        />
-        <Text dimColor>at</Text>
-        {stepper(
+        />,
+        <Text dimColor>at</Text>,
+        stepper(
           'compact',
           s.compact.at,
           d => void changeSettings($, x => ({ ...x, compact: { ...x.compact, at: clampPct(x.compact.at + d) } })),
           s.compact.mode !== 'off',
-        )}
-      </Box>
+        ),
+      )}
+    </Box>
+  )
+
+  const models = (
+    <Box flexDirection="column">
+      {head('Model slider', 'Five positions above the prompt. Click a part to change it.')}
+      {row('Show slider', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))))}
+      {s.models.slots.map((slot, i) =>
+        row(
+          `Position ${i + 1}`,
+          <Button key={`slot-${i}-model`} label={modelLabel(slot.model).padEnd(9)} dimColor onPress={() => setSlot(i, { model: cycle(MODEL_CHOICES, slot.model) })} />,
+          <Button key={`slot-${i}-effort`} label={EFFORT_SHORT[slot.effort].padEnd(5)} dimColor onPress={() => setSlot(i, { effort: cycle(EFFORTS, slot.effort) })} />,
+          isLocked(slot, s.models) ? <Text color={C.warn}>Max only</Text> : null,
+        ),
+      )}
+      {row(
+        'Max plan',
+        toggle('has-max', s.models.hasMax, () => changeSettings($, x => ({ ...x, models: { ...x.models, hasMax: !x.models.hasMax } }))),
+        <Text dimColor>Fable stays locked until this is on</Text>,
+      )}
+      {head('Modes', 'Apply to this session.')}
+      {row('Fast mode', <Button key="fast-toggle" label={c.fast === null ? 'Toggle' : c.fast ? 'On ' : 'Off'} dimColor={!c.fast} onPress={() => toggleFast($)} />)}
+      {row(
+        'Output style',
+        <Button key="style-next" label={c.outputStyle ?? 'default'} dimColor onPress={() => void setStyle($).then(t => $.ui.toast(t))} />,
+      )}
+      {head('You should know', 'Anthropic’s built-in side agent that flags things you or Claude might miss.')}
+      {row('Side agent', toggle('ysk-toggle', c.youShouldKnow, () => setYouShouldKnow($, !c.youShouldKnow)))}
+    </Box>
+  )
+
+  const timelineTab = (
+    <Box flexDirection="column">
+      {head('Timeline', 'One line per prompt: green done, red failed, amber stopped. Click a line to jump back.')}
+      {row('Open', <Button key="timeline-open" label="Timeline" dimColor onPress={() => openTimeline($)} />)}
+      {row(
+        'AI summaries',
+        toggle('summary-toggle', s.timeline.isAiSummary, () => changeSettings($, x => ({ ...x, timeline: { isAiSummary: !x.timeline.isAiSummary } }))),
+        <Text dimColor>one Haiku call per prompt (uses tokens)</Text>,
+      )}
+    </Box>
+  )
+
+  const display = (
+    <Box flexDirection="column">
       {head('Display', 'Classic: deep solid colors. Minimal: quiet tones. Terminal: the text bars, everywhere.')}
-      <Box flexDirection="row" gap={1}>
-        <Text>{'Style'.padEnd(14)}</Text>
+      {row('Style', <Button key="look-style" label={STYLE_LABEL[s.look.style]} onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, style: nextStyle[x.look.style] } }))} />)}
+      {row(
+        'Text size',
+        <Button key="look-size-down" label="−" plain dimColor onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, -1) } }))} />,
+        <Text> {s.look.size.toUpperCase()} </Text>,
+        <Button key="look-size-up" label="+" plain dimColor onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, 1) } }))} />,
+      )}
+      {row('Answer line', <Button key="footer-mode" label={FOOTER_LABEL[s.footer]} dimColor={s.footer === 'off'} onPress={() => changeSettings($, x => ({ ...x, footer: nextFooter[x.footer] }))} />)}
+    </Box>
+  )
+
+  return (
+    <Box flexDirection="column">
+      {tabs}
+      {tab === 'usage' ? usage : tab === 'models' ? models : tab === 'timeline' ? timelineTab : display}
+    </Box>
+  )
+}
+
+// The slider row: draggable on surfaces that run a `Client`, buttons elsewhere;
+// then the fast mode and output style switches.
+async function drawModelRow($: EngineInterface, e: RenderInput<'AbovePrompt' | 'Pane' | 'CommandOutput'>) {
+  const s = await read($, settings)
+  if (!s.models.isShown) return null
+  const c = await read($, current)
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const Client =
+    e.surface === 'terminal' || e.surface === 'desktop'
+      ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client
+      : undefined
+  const active = activeSlot(c, s.models)
+  const labels = s.models.slots.map(slotLabel)
+  const locked = s.models.slots.map(x => isLocked(x, s.models))
+  const room = (e.component === 'AbovePrompt' ? e.props.bodyColumns : (e.viewport?.columns ?? 80)) - 24
+  const slider = Client ? (
+    <Client key="model-slider" module="./slider.tsx" props={{ labels, locked, active, accent: C.accent }} width={Math.max(30, Math.min(labels.length * 14, room))} />
+  ) : (
+    <Box flexDirection="row" flexWrap="wrap" gap={1}>
+      {labels.map((label, i) => (
         <Button
-          key="look-style"
-          label={STYLE_LABEL[s.look.style]}
-          onPress={() =>
-            changeSettings($, x => ({ ...x, look: { ...x.look, style: nextStyle[x.look.style] } }))
-          }
+          key={`model-${i}`}
+          label={`${locked[i] ? '⊘ ' : ''}${label}`}
+          variant={i === active ? 'primary' : undefined}
+          dimColor={i !== active}
+          onPress={() => applySlot($, i)}
         />
-      </Box>
-      <Box flexDirection="row" gap={1}>
-        <Text>{'Text size'.padEnd(14)}</Text>
-        <Button
-          key="look-size-down"
-          label="−"
-          plain
-          dimColor
-          onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, -1) } }))}
-        />
-        <Text> {s.look.size.toUpperCase()} </Text>
-        <Button
-          key="look-size-up"
-          label="+"
-          plain
-          dimColor
-          onPress={() => changeSettings($, x => ({ ...x, look: { ...x.look, size: stepSize(x.look.size, 1) } }))}
-        />
-      </Box>
-      <Box flexDirection="row" gap={1}>
-        <Text>{'Answer line'.padEnd(14)}</Text>
-        <Button
-          key="footer-mode"
-          label={FOOTER_LABEL[s.footer]}
-          dimColor={s.footer === 'off'}
-          onPress={() => changeSettings($, x => ({ ...x, footer: nextFooter[x.footer] }))}
-        />
-      </Box>
+      ))}
+    </Box>
+  )
+  return (
+    <Box flexDirection="row" flexWrap="wrap" gap={1}>
+      {slider}
+      <Text color={C.rule}>│</Text>
+      <Button key="fast" label={c.fast ? '⚡ Fast' : 'Fast'} plain dimColor={!c.fast} onPress={() => toggleFast($)} />
+      <Button
+        key="style"
+        label={c.outputStyle && c.outputStyle !== 'default' ? c.outputStyle : 'Style'}
+        plain
+        dimColor
+        onPress={() => void setStyle($).then(t => $.ui.toast(t))}
+      />
+    </Box>
+  )
+}
+
+const STATUS_DOT: Record<Entry['status'], string> = { ok: '🟢', error: '🔴', stopped: '🟡', running: '⚪' }
+
+async function timelineText($: EngineInterface) {
+  const list = await read($, timeline)
+  if (!list.length) return 'No prompts yet.'
+  return list
+    .slice(-20)
+    .reverse()
+    .map(x => {
+      const meta = [x.ms === null ? 'running' : dur(x.ms), x.tools ? `${x.tools} tools` : '', x.errors ? `${x.errors} failed` : '', x.files.join(', ')]
+        .filter(Boolean)
+        .join(' · ')
+      return `${STATUS_DOT[x.status]} ${clock(x.at)}  ${(x.summary ?? x.text).slice(0, 70)}\n      ${meta}`
+    })
+    .join('\n')
+}
+
+async function drawTimeline($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  await lookOf($)
+  const list = await read($, timeline)
+  await read($, tick)
+  const now = await $.clock.now()
+  const color = (x: Entry) => (x.status === 'ok' ? C.ok : x.status === 'error' ? C.hot : x.status === 'stopped' ? C.warn : C.accent)
+  if (!list.length) return <Text dimColor>No prompts yet. Each prompt you send becomes a line here.</Text>
+  return (
+    <Box flexDirection="column">
+      {[...list]
+        .reverse()
+        .slice(0, 40)
+        .map(x => {
+          const meta = [
+            clock(x.at),
+            x.ms === null ? `running ${dur(now - x.at)}` : dur(x.ms),
+            x.tools ? `${x.tools} tools` : '',
+            x.errors ? `${x.errors} failed` : '',
+            x.files.join(', '),
+          ]
+            .filter(Boolean)
+            .join(' · ')
+          return (
+            <Box flexDirection="column" marginBottom={1}>
+              <Box flexDirection="row">
+                <Text color={color(x)}>▍</Text>
+                <Button key={`tl-${x.id}`} label={(x.summary ?? x.text).slice(0, 90)} plain onPress={() => jumpTo($, x.id)} />
+              </Box>
+              <Box flexDirection="row">
+                <Text color={color(x)}>▍</Text>
+                <Text dimColor>{meta}</Text>
+              </Box>
+            </Box>
+          )
+        })}
     </Box>
   )
 }
@@ -997,9 +1471,12 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
     </Box>
   )
 
+  const modelRow = e.surface === 'mobile' || e.surface === 'vscode' ? await drawModelRow($, e) : null
+
   return (
     <Box flexDirection="column">
       {header}
+      {modelRow}
       {meters}
       {summary}
       {pendingRow}

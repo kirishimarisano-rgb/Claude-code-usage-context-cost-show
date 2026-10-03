@@ -59,13 +59,55 @@ export type LookStyle = 'classic' | 'minimal' | 'terminal'
 
 export type Look = { style: LookStyle; size: 's' | 'm' | 'l' }
 
+export type EffortName = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+// One position of the model slider: a /model alias and an /effort level.
+export type Slot = { model: string; effort: EffortName }
+
+export type ModelPrefs = {
+  isShown: boolean
+  slots: Slot[]
+  // Fable is for Max plans: its positions stay locked until this is set.
+  hasMax: boolean
+}
+
 export type GaugeSettings = {
   wrap5h: WrapRule
   wrap7d: WrapRule
   compact: { mode: CompactMode; at: number }
   footer: FooterMode
   look: Look
+  models: ModelPrefs
+  timeline: { isAiSummary: boolean }
 }
+
+// What the session runs now, as the last request and this mod's switches saw it.
+export type Current = {
+  model?: string
+  effort?: string
+  slot: number | null
+  fast: boolean | null
+  outputStyle?: string
+  styles: string[]
+  youShouldKnow: boolean | null
+}
+
+export type EntryStatus = 'running' | 'ok' | 'error' | 'stopped'
+
+// One prompt of the session on the timeline.
+export type Entry = {
+  id: string
+  text: string
+  at: number
+  ms: number | null
+  tools: number
+  errors: number
+  files: string[]
+  status: EntryStatus
+  summary?: string
+}
+
+export type SettingsTab = 'usage' | 'models' | 'timeline' | 'display'
 
 export type Wrap = {
   pending: { deadline: number; key: string; label: string } | null
@@ -83,6 +125,9 @@ declare module 'claude-code' {
       wrap: Wrap
       tick: number
       compactAt: number | null
+      current: Current
+      timeline: Entry[]
+      settingsTab: SettingsTab
     }
   }
 }
