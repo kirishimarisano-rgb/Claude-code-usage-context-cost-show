@@ -72,12 +72,6 @@ const bar = (ratio: number, width: number, on = '━', off = '─') => {
 const tone = (ratio: number, warnAt: number, hotAt: number) =>
   ratio >= hotAt ? C.hot : ratio >= warnAt ? C.warn : C.ok
 
-const SPARK = '▁▂▃▄▅▆▇█'
-const spark = (values: number[]) => {
-  const max = Math.max(1, ...values)
-  return values.map(v => SPARK[Math.min(7, Math.floor((v / max) * 7.999))]).join('')
-}
-
 const limitLabel = (kind: string) =>
   kind === 'five_hour' ? '5h' : kind === 'seven_day' ? '7d' : kind === 'spend_limit' ? 'spend' : kind
 
@@ -957,34 +951,42 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
     </Box>
   )
 
-  const recent = hist.slice(-12)
-  const historySection = recent.length > 1 && (
+  // Plain numbers: block-glyph sparklines smear together in proportional UI fonts.
+  const recent = hist.slice(-5).reverse()
+  const historySection = recent.length > 0 && (
     <Box flexDirection="column">
       {head('Recent turns')}
-      <Box flexDirection="row">
-        <Text dimColor>{'time'.padEnd(6)}</Text>
-        <Text color={C.accent}>{spark(recent.map(r => r.ms))}</Text>
-        <Text dimColor> last {dur(recent[recent.length - 1]!.ms)}</Text>
-      </Box>
-      <Box flexDirection="row">
-        <Text dimColor>{'tok/s'.padEnd(6)}</Text>
-        <Text color={C.accent}>{spark(recent.map(r => r.tps ?? 0))}</Text>
-        <Text dimColor> last {recent[recent.length - 1]!.tps ?? '—'}</Text>
-      </Box>
+      {recent.map((r, i) => (
+        <Box flexDirection="row">
+          <Text color={i === 0 ? undefined : C.rule}>{i === 0 ? '● ' : '○ '}</Text>
+          <Text>{dur(r.ms)}</Text>
+          <Text dimColor>
+            {r.thinkMs ? ` · think ${dur(r.thinkMs)}` : ''}
+            {r.tps ? ` · ${r.tps} tok/s` : ''}
+            {r.tools ? ` · ${r.tools} tools` : ''}
+            {r.isAborted ? ' · stopped' : ''}
+          </Text>
+        </Box>
+      ))}
     </Box>
   )
 
+  // Name, then its tokens and share of the window, on one line: a right-aligned
+  // column does not survive surfaces that lay text out in proportional fonts.
   const breakdown = m && m.categories.length > 0 && (
     <Box flexDirection="column">
       {head('Context breakdown')}
-      {m.categories.slice(0, 8).map(c => (
-        <Box flexDirection="row" justifyContent="space-between" width={width}>
-          <Text dimColor wrap="truncate">
-            {c.name}
-          </Text>
-          <Text dimColor>{k(c.tokens)}</Text>
-        </Box>
-      ))}
+      {[...m.categories]
+        .filter(c => !/free space/i.test(c.name))
+        .sort((a, b) => b.tokens - a.tokens)
+        .slice(0, 8)
+        .map(c => (
+          <Box flexDirection="row">
+            <Text dimColor>{c.name}  </Text>
+            <Text>{k(c.tokens)}</Text>
+            <Text dimColor> · {Math.max(0.1, Math.round((c.tokens / m.window) * 1000) / 10)}%</Text>
+          </Box>
+        ))}
     </Box>
   )
 

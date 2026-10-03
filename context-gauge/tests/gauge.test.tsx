@@ -24,6 +24,9 @@ const measure = (tokens: number, fiveHour: number) => ({
   changed: ['context', 'rateLimits', 'cost'] as ('context' | 'rateLimits' | 'cost')[],
 })
 
+// The /context breakdown session.usage answers, when a test sets one.
+let breakdown: unknown = undefined
+
 // Toasts the plugin showed, newest last.
 const toasts: string[] = []
 
@@ -35,7 +38,12 @@ function engine(on: On, onAbort: (turnId: string) => void = () => {}) {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   on('session.usage', () => ({
-    value: { startedAt: 0, context: last.context, rateLimits: last.rateLimits, cost: last.cost },
+    value: {
+      startedAt: 0,
+      context: { ...last.context, breakdown: breakdown as never },
+      rateLimits: last.rateLimits,
+      cost: last.cost,
+    },
   }))
   on('session.measure', (_$, e) => ({ changed: [...e.changed] }))
   on('ui.toast', (_$, e) => {
@@ -277,5 +285,38 @@ test('the Terminal look draws the original text bars on desktop too', async ($, 
   expect(await ui.find({ type: 'Text', text: '◆ ' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '▰▰' })).toBeDefined()
   expect(await shown(ui)).toMatch(/42%/)
+  await ui.unmount()
+})
+
+test('the pane lists the context breakdown with numbers and recent turns as text', async ($, on) => {
+  engine(on)
+  breakdown = {
+    categories: [
+      { name: 'Messages', tokens: 120_000 },
+      { name: 'System prompt', tokens: 8_000 },
+      { name: 'Free space', tokens: 500_000 },
+    ],
+    autoCompactThreshold: 190_000,
+    isAutoCompactEnabled: true,
+  }
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  await measured($, measure(60_000, 42))
+  await $.turn.start({ text: 'go', turnId: 't9' })
+  await $.turn.complete({ answer: 'ok', durationMs: 3000, isAborted: false, turnId: 't9', reason: 'answer' })
+  const pane = {
+    plugin: 'context-gauge',
+    component: 'Pane',
+    requestId: 'gauge',
+    props: { title: 'Gauge', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+  } as const
+  const ui = await $.ui.mount({ ...pane, surface: 'desktop' })
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('|')
+  breakdown = undefined
+  expect(texts).toMatch(/Messages  \|120k/)
+  expect(texts).toMatch(/System prompt  \|8k/)
+  expect(texts).not.toMatch(/Free space/)
+  expect(texts).toMatch(/● \|3s/)
+  expect(texts).not.toMatch(/[▁▂▃▄▅▆▇█]/)
   await ui.unmount()
 })
