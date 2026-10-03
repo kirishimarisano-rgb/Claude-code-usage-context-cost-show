@@ -720,3 +720,49 @@ test('the settings gear and the other controls are drawn at every width and look
     }
   }
 })
+
+test('/gauge usage asks Anthropic for the limit windows with the session login', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  const asked: { url: string; auth?: string }[] = []
+  let answer = { status: 200, ok: true, text: '' }
+  on('session.authorize', () => ({ value: { handle: 'h-1', kind: 'bearer' } }))
+  on('http.fetch', (_$, e) => {
+    const x = e as { url?: string; auth?: string; init?: { auth?: string } }
+    asked.push({ url: String(x.url), auth: x.init?.auth ?? x.auth })
+    return { value: { ...answer, headers: {} } }
+  })
+  answer = {
+    status: 200,
+    ok: true,
+    text: JSON.stringify({
+      five_hour: { utilization: 34, resets_at: '2026-10-03T21:00:00Z' },
+      seven_day: { utilization: 96.04, resets_at: '2026-10-04T18:00:00Z' },
+      seven_day_opus: { utilization: 12 },
+      extra_usage: null,
+      'bad key!': { utilization: 5 },
+    }),
+  }
+  const text = (await run($, 'usage')).text
+  expect(asked[0]?.url).toBe('https://api.anthropic.com/api/oauth/usage')
+  expect(text).toMatch(/5h 34%/)
+  expect(text).toMatch(/7d 96%/)
+  expect(text).toMatch(/7d Opus 12%/)
+  expect(text).not.toMatch(/bad key/)
+
+  // A reply that carries no limit windows keeps the ones just read.
+  await measured($, { ...measure(60_000, 0), rateLimits: [] })
+  expect((await run($, 'show')).text).toMatch(/5 HOUR .* 34%/)
+
+  answer = { status: 403, ok: false, text: '{}' }
+  expect((await run($, 'usage')).text).toMatch(/cannot read usage/)
+  answer = { status: 429, ok: false, text: '{}' }
+  expect((await run($, 'usage')).text).toMatch(/asked too often/)
+})
+
+test('/gauge usage says so when there is no Claude login', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  on('session.authorize', () => ({ value: null }))
+  expect((await run($, 'usage')).text).toMatch(/no Claude login/)
+})

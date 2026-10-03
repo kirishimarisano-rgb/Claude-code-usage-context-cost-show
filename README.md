@@ -1,5 +1,7 @@
 # Claude Code mods
 
+**繁體中文** · [English](README.en.md)
+
 ## context-gauge
 
 ![preview](docs/preview-dark.png)
@@ -9,14 +11,14 @@
 輸入框上方的用量細條，加上可折疊的右側面板。
 
 - **Context**：用量百分比與 token 數，接近自動壓縮門檻時變紅並顯示 `compacts soon`
-- **額度**：5h / 7d 用量與重置倒數，以及本次 session 花費
+- **額度**：5h / 7d 用量與重置倒數，以及本次 session 花費。session 一開始會向 Anthropic 查一次（不用等第一次回應），之後隨時可以在 ◉ 按 ↻ Refresh 或打 `/gauge usage` 再查（至少間隔 60 秒）
 - **任務進行中**：思考、輸出、工具各花的時間，tok/s，工具時間軸，**■ Stop** 按鈕
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
 - **模型切換**：細條上一個可拖的膠囊滑塊（Claude 橘色填到目前檔位、白色圓鈕）加模型名稱，兩者一起顯示或一起隱藏；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
 - **時間軸**：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片（可在設定頁關閉）。細條上的 ≡ 打開 **History** 視窗：每則訊息的時間、你說了什麼、Claude 做了什麼（各取開頭，不花 token），可篩選，點一下跳回那段對話；AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
-- **Claude 服務狀態**：細條上的 ◉ 在細條內展開 claude.ai、API、Claude Code 等服務的狀態與進行中的事件；只有按 ↻ Refresh 才會查詢 status.claude.com。
+- **Claude 服務狀態與額度**：細條上的 ◉ 在細條內展開 claude.ai、API、Claude Code 等服務的狀態、進行中的事件，以及剛查到的額度；只有按 ↻ Refresh 才會查詢。
 - **You should know**：Anthropic 內建的側邊 agent（`cc-plugin-you-should-know@builtin`），可在設定頁一鍵開關。
 - **設定頁**：`/gauge settings`，或細條旁的 ⚙；分成 Usage / Models / Timeline / Display 四頁
 
@@ -67,6 +69,7 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge ysk on\|off` | You should know 側邊 agent |
 | `/gauge history` | History 視窗 |
 | `/gauge status` | 查一次 Claude 服務狀態 |
+| `/gauge usage` | 立刻向 Anthropic 查 5h / 週額度 |
 | `/gauge summary on\|off` | 時間軸的 AI 摘要（會用 token） |
 | `/gauge marks on\|off` | 訊息上的時間軸色線 |
 | `/gauge footer auto\|on\|off` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |
@@ -92,7 +95,7 @@ claude plugin install context-gauge@kirishima-mods
 
 ### 讀寫範圍
 
-只讀 session 用量、每輪事件與時鐘；唯一的連網是你按 ↻ Refresh 時查一次 status.claude.com。寫入只有畫面、記憶體中的狀態，以及保存在 `$.store` 的設定（面板是否折疊、設定頁的各項）。不讀寫專案檔案、不執行程式。
+只讀 session 用量、每輪事件與時鐘。連網只有兩處：查額度（session 開始時一次，以及你按 ↻ Refresh 或 `/gauge usage` 時）與查服務狀態（只在按 ↻ Refresh 時）。寫入只有畫面、記憶體中的狀態，以及保存在 `$.store` 的設定（面板是否折疊、設定頁的各項）。不讀寫專案檔案、不執行程式。
 
 `/gauge` 系列指令的輸出會留在對話紀錄裡，模型讀得到（每次約幾十到一兩百 token；`/gauge history` 會帶出你先前訊息的開頭）。每輪回答下方那一行和所有細條、面板則只給你看。
 
@@ -100,14 +103,17 @@ claude plugin install context-gauge@kirishima-mods
 
 ### 安全性
 
-- 對外連線只有一個：你按 ↻ Refresh 時以 GET 讀 `https://status.claude.com/api/v2/summary.json`，不帶任何憑證。
+- 對外連線只有兩個，都是 GET：
+  - `https://status.claude.com/api/v2/summary.json`：只在按 ↻ Refresh 時，不帶憑證。
+  - `https://api.anthropic.com/api/oauth/usage`：session 開始時一次（可在設定頁關閉）、按 ↻ Refresh 或 `/gauge usage` 時，至少間隔 60 秒。用的是 Claude Code 自己的登入：mod 只拿到一個代號，看不到憑證本身，而且 Claude Code 只會把它送到 Anthropic。
 - 會呼叫的 Claude Code 指令固定為 `/model`、`/effort`、`/fast`、`/plugin enable|disable cc-plugin-you-should-know@builtin`，以及 `/config` 的 `outputStyle`；模型 id 只接受英數與 `. _ - [ ] :`，在輸入與切換時各檢查一次。
 - 不執行程式、不讀寫專案檔案；SVG 只放數字與固定標籤，不放你或 Claude 的文字；狀態頁回傳的文字有長度上限。
 - 自動收尾插入的提示、自動 /compact 都是固定內容，且預設關閉或只提醒。
 
 ### 已知限制
 
-- 雲端 session 的客戶端不畫 mod 介面，只有文字（`/gauge` 與回答下方那一行）。
+- 雲端 session 的客戶端不畫 mod 介面，只有文字（`/gauge` 與回答下方那一行）；雲端 session 的登入也沒有查額度的權限，額度只能從回應裡讀到。
+- 用 API key 或企業閘道登入時沒有 5h／週額度可查。
 - 手機 app 不畫細條；`/gauge` 那一列有按鈕。
 - 時間軸只記得 mod 載入後的訊息，重開 Claude Code 會清空；少數沒有訊息編號的回合不能跳回。
 - mod 讀不到你的方案，Fable 檔位要你在設定頁自己打開「Max plan」。

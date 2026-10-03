@@ -58,6 +58,7 @@ const DEFAULTS: GaugeSettings = {
     ],
   },
   timeline: { isAiSummary: false, isMarked: true },
+  isUsageAtStart: true,
 }
 
 const meter = atom({ plugin: 'context-gauge', key: 'meter' } as const, null)
@@ -82,6 +83,7 @@ const isPickerOpen = atom({ plugin: 'context-gauge', key: 'isPickerOpen' } as co
 const historyQuery = atom({ plugin: 'context-gauge', key: 'historyQuery' } as const, '')
 const isStatusOpen = atom({ plugin: 'context-gauge', key: 'isStatusOpen' } as const, false)
 const serviceStatus = atom({ plugin: 'context-gauge', key: 'serviceStatus' } as const, null as ServiceStatus | null)
+const usageCheck = atom({ plugin: 'context-gauge', key: 'usageCheck' } as const, null as { at: number; error?: string } | null)
 
 const WRAP_DELAY_MS = 10_000
 const NOTIFY_AFTER_MS = 20_000
@@ -131,6 +133,7 @@ const tone = (ratio: number, warnAt: number, hotAt: number) =>
   ratio >= hotAt ? C.hot : ratio >= warnAt ? C.warn : C.ok
 
 const limitLabel = (kind: string) =>
+  kind === 'seven_day_opus' ? '7d Opus' : kind === 'seven_day_sonnet' ? '7d Sonnet' :
   kind === 'five_hour' ? '5h' : kind === 'seven_day' ? '7d' : kind === 'spend_limit' ? 'spend' : kind
 
 const resetIn = (l: Limit, now: number) => {
@@ -252,7 +255,7 @@ async function refreshBreakdown($: EngineInterface) {
     tokens: usage.context.tokens,
     window: usage.context.window,
     percent: usage.context.percent,
-    limits: usage.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt })),
+    limits: usage.rateLimits.length ? usage.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt })) : (m?.limits ?? []),
     usd: usage.cost?.usd,
     delta: m?.delta,
     threshold: b?.autoCompactThreshold,
@@ -279,6 +282,7 @@ async function loadSettings($: EngineInterface) {
     look: saved?.look ?? DEFAULTS.look,
     models: { ...DEFAULTS.models, ...saved?.models },
     timeline: { ...DEFAULTS.timeline, ...saved?.timeline },
+    isUsageAtStart: saved?.isUsageAtStart ?? DEFAULTS.isUsageAtStart,
   }
   await update($, settings, () => s)
 }
@@ -563,6 +567,50 @@ async function jumpTo($: EngineInterface, id: string) {
   if (r.deny) $.ui.toast(`Could not jump there (${r.deny})`, { timeoutMs: 5000 })
 }
 
+// ---------- usage limits, asked of Anthropic ----------
+
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+const USAGE_EVERY_MS = 60_000
+let usageAskedAt = 0
+
+// Asks Anthropic for the account's limit windows (what /usage shows) with the
+// session's own login, held by the host: the plugin sees a handle, never the
+// token, and the host only sends it to Anthropic. At most once a minute.
+async function checkUsage($: EngineInterface) {
+  const now = await $.clock.now()
+  if (now - usageAskedAt < USAGE_EVERY_MS) return
+  usageAskedAt = now
+  const fail = (error: string) => update($, usageCheck, () => ({ at: now, error }))
+  try {
+    const auth = await $.session.authorize()
+    if (!auth) return void (await fail('no Claude login (API key or gateway sessions have no usage windows)'))
+    const r = await $.http.fetch(USAGE_URL, { auth: auth.handle, headers: { 'anthropic-beta': 'oauth-2025-04-20' } })
+    if (r.status === 401 || r.status === 403) return void (await fail('this login cannot read usage (cloud sessions cannot)'))
+    if (r.status === 429) return void (await fail('asked too often; try again in a minute'))
+    if (!r.ok) return void (await fail(`HTTP ${r.status}`))
+    const d = JSON.parse(r.text) as Record<string, unknown>
+    const limits: Limit[] = []
+    for (const [kind, v] of Object.entries(d)) {
+      const w = v as { utilization?: unknown; resets_at?: unknown } | null
+      if (!w || typeof w !== 'object' || typeof w.utilization !== 'number' || !/^[a-z0-9_]{1,40}$/.test(kind)) continue
+      limits.push({
+        kind,
+        percent: Math.round(Math.max(0, w.utilization) * 10) / 10,
+        resetsAt: typeof w.resets_at === 'string' ? w.resets_at.slice(0, 40) : undefined,
+      })
+    }
+    if (!limits.length) return void (await fail('no usage windows in the answer'))
+    await update($, meter, m =>
+      m
+        ? { ...m, limits: [...limits, ...m.limits.filter(x => !limits.some(y => y.kind === x.kind))] }
+        : { window: 0, isAutoCompact: true, categories: [], limits },
+    )
+    await update($, usageCheck, () => ({ at: now }))
+  } catch (error) {
+    await fail(String(error).slice(0, 100))
+  }
+}
+
 // ---------- Claude's service status ----------
 
 const STATUS_URL = 'https://status.claude.com/api/v2/summary.json'
@@ -637,6 +685,7 @@ const COMMANDS = [
   '/gauge summary on|off      AI summaries on the timeline (uses tokens)',
   '/gauge marks on|off        timeline marks on your messages',
   '/gauge status              Claude service status (checks status.claude.com)',
+  '/gauge usage               ask Anthropic for the 5-hour and weekly usage now',
 ].join('\n')
 
 async function onSlide($: EngineInterface, e: { data: unknown }) {
@@ -665,6 +714,9 @@ export const register: Register = on => {
       },
       () => refreshBreakdown($),
       () => loadModes($),
+      async () => {
+        if ((await read($, settings)).isUsageAtStart) quietly(checkUsage($))
+      },
     ]) {
       try {
         await step()
@@ -768,6 +820,15 @@ export const register: Register = on => {
       await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isMarked: a === 'on' } }))
       return { text: `Timeline marks on messages: ${a}.` }
     }
+    if (sub === 'usage') {
+      usageAskedAt = 0
+      await checkUsage($)
+      const u = await read($, usageCheck)
+      const m = await read($, meter)
+      if (u?.error) return { text: `Usage check failed: ${u.error}` }
+      const now = await $.clock.now()
+      return { text: (m?.limits ?? []).map(x => `${limitLabel(x.kind)} ${x.percent}% ${resetIn(x, now)}`.trim()).join(' · ') || 'No usage windows.' }
+    }
     if (sub === 'status') {
       await refreshStatus($)
       await update($, isStatusOpen, () => true)
@@ -797,7 +858,7 @@ export const register: Register = on => {
       tokens: e.context.tokens,
       window: e.context.window,
       percent: e.context.percent,
-      limits: e.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt })),
+      limits: e.rateLimits.length ? e.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt })) : (m?.limits ?? []),
       usd: e.cost?.usd,
       delta:
         prev?.tokens !== undefined && e.context.tokens !== undefined
@@ -1325,6 +1386,12 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
       {head('Auto wrap-up', 'A note into the running task: finish the step, save, hand off.')}
       {ruleRow('wrap5h', '5-hour limit')}
       {ruleRow('wrap7d', 'Weekly limit')}
+      {head('Usage windows', 'Read 5-hour and weekly usage from Anthropic, not only from replies.')}
+      {row(
+        'At start',
+        toggle('usage-at-start', s.isUsageAtStart, () => changeSettings($, x => ({ ...x, isUsageAtStart: !x.isUsageAtStart }))),
+        <Text dimColor>also ↻ in ◉, or /gauge usage, any time</Text>,
+      )}
       {head('Context', `When to /compact${auto ? ` (Claude auto-compacts at ${auto}%)` : ''}. Auto runs only while idle.`)}
       {row(
         '/compact',
@@ -1547,20 +1614,30 @@ async function drawStatus($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   if (!(await read($, isStatusOpen))) return null
   const { Box, Text, Button } = $.ui.resolve(e)
   const st = await read($, serviceStatus)
+  const usage = await read($, usageCheck)
+  const m = await read($, meter)
   const now = await $.clock.now()
   const colorOf = (status: string) =>
     status === 'operational' || status === 'none' ? C.ok : status === 'degraded_performance' || status === 'minor' || status === 'under_maintenance' ? C.warn : C.hot
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.rule} paddingX={1}>
       <Box flexDirection="row" gap={2}>
-        <Text bold>Claude status</Text>
+        <Text bold>Claude status & usage</Text>
         {st ? (
           <Text color={st.error ? C.hot : colorOf(st.indicator)}>{st.error ? `check failed: ${st.error}` : st.description || st.indicator}</Text>
         ) : (
           <Text dimColor>not checked yet</Text>
         )}
         {st && <Text dimColor>· {dur(now - st.at)} ago</Text>}
-        <Button key="status-refresh" label="↻ Refresh" plain onPress={() => refreshStatus($)} />
+        <Button
+          key="status-refresh"
+          label="↻ Refresh"
+          plain
+          onPress={async () => {
+            usageAskedAt = 0
+            await Promise.all([refreshStatus($), checkUsage($)])
+          }}
+        />
         <Button key="status-close" label="✕" plain dimColor onPress={() => update($, isStatusOpen, () => false)} />
       </Box>
       {st && st.components.length > 0 && (
@@ -1574,6 +1651,13 @@ async function drawStatus($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
             </Box>
           ))}
         </Box>
+      )}
+      {usage && (
+        <Text color={usage.error ? C.warn : undefined} dimColor={!usage.error} wrap="truncate">
+          {usage.error
+            ? `Usage: ${usage.error}`
+            : `Usage, ${dur(now - usage.at)} ago: ${(m?.limits ?? []).map(x => `${limitLabel(x.kind)} ${x.percent}%`).join(' · ')}`}
+        </Text>
       )}
       {st?.incidents.map(i => (
         <Text color={i.impact === 'none' || i.impact === 'minor' ? C.warn : C.hot} wrap="truncate">

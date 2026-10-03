@@ -79,6 +79,8 @@ export type GaugeSettings = {
   look: Look
   models: ModelPrefs
   timeline: TimelinePrefs
+  // Ask Anthropic for the 5-hour and weekly usage when the session starts.
+  isUsageAtStart: boolean
 }
 
 // The timeline: a mark on each of your messages, and the AI one-line
@@ -149,6 +151,7 @@ declare module 'claude-code' {
       historyQuery: string
       isStatusOpen: boolean
       serviceStatus: ServiceStatus | null
+      usageCheck: { at: number; error?: string } | null
     }
   }
 }

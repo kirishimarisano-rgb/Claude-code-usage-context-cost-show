@@ -1,5 +1,11 @@
 # Changelog
 
+## context-gauge 1.1.0
+
+- Usage any time: the 5-hour and weekly windows (and per-model weekly ones such as 7d Opus, where the plan has them) are read from Anthropic when the session starts, on ◉ → ↻ Refresh, and on `/gauge usage`, at most once a minute, with Claude Code's own login held by the host. A reply without limit data no longer clears them. The start check can be turned off in settings.
+- The ◉ panel shows status and usage together.
+- English README.
+
 ## context-gauge 1.0.2
 
 - The model slider and the model name are one control: shown together or hidden together (`/gauge models on|off`; `/gauge slider` does the same).
