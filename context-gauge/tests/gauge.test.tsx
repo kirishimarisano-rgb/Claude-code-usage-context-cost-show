@@ -268,8 +268,9 @@ test('display style and text size are set from the settings page', async ($, on)
     component: 'CommandOutput',
     props: { command: 'gauge', args: 'settings', text: '', isErrored: false },
   } as const
+  // A band wide enough that the meters keep their full size.
   const svgOf = async () => {
-    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: 260 } })
     const source = String((await ui.find({ type: 'Svg' }))?.props.source)
     await ui.unmount()
     return source
