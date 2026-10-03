@@ -13,8 +13,8 @@
 ### 使用
 
 ```sh
-git clone https://github.com/kirishimarisano-rgb/Mods-Claude-code-0-powerd-by-claude
-claude --plugin-dir ./Mods-Claude-code-0-powerd-by-claude/context-gauge
+git clone https://github.com/kirishimarisano-rgb/Claude-code-usage-context-cost-show
+claude --plugin-dir ./Claude-code-usage-context-cost-show/context-gauge
 ```
 
 **Claude Code Desktop**（不能加參數）：在 `~/.claude/settings.json` 的 `env` 加上 mod 的絕對路徑，然後在 Desktop 的 Code 分頁開一個**本機** session（不是雲端 session）：
@@ -22,7 +22,7 @@ claude --plugin-dir ./Mods-Claude-code-0-powerd-by-claude/context-gauge
 ```json
 {
   "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "/Users/you/Mods-Claude-code-0-powerd-by-claude/context-gauge"
+    "CLAUDE_CODE_PLUGIN_DIRS": "/Users/you/Claude-code-usage-context-cost-show/context-gauge"
   }
 }
 ```
