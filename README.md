@@ -14,8 +14,9 @@ Desktop 和手機 app 畫一行高的 SVG 細條（上方是輸入框上的細�
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
-- **模型切換**：細條上一個可拖的膠囊滑塊（Claude 橘色填到目前檔位、白色圓鈕）加模型名稱；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
-- **時間軸**（設定頁可各自開關）：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片：那句話的開頭、耗時、工具數、改過的檔案；細條上一排小刻度（每格兩字寬），滑鼠停上去，用量那一段暫時換成那則訊息的內容（版面不動），點一下跳回那段對話；細條上的 ⌕ 可輸入關鍵字，跳到最近一則提到它的訊息（也可用 `/gauge find <關鍵字>`）；也可另外打開側邊面板。AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
+- **模型切換**：細條上一個可拖的膠囊滑塊（Claude 橘色填到目前檔位、白色圓鈕；可在設定頁單獨隱藏）加模型名稱；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
+- **時間軸**：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片（可在設定頁關閉）。細條上的 ≡ 打開 **History** 視窗：每則訊息的時間、你說了什麼、Claude 做了什麼（各取開頭，不花 token），可篩選，點一下跳回那段對話；AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
+- **Claude 服務狀態**：細條上的 ◉ 在細條內展開 claude.ai、API、Claude Code 等服務的狀態與進行中的事件；只有按 ↻ Refresh 才會查詢 status.claude.com。
 - **You should know**：Anthropic 內建的側邊 agent（`cc-plugin-you-should-know@builtin`），可在設定頁一鍵開關。
 - **設定頁**：`/gauge settings`，或細條旁的 ⚙；分成 Usage / Models / Timeline / Display 四頁
 
@@ -64,11 +65,11 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge fast` | 切換 Fast mode |
 | `/gauge style [名稱]` | 下一個輸出風格，或指定一個 |
 | `/gauge ysk on\|off` | You should know 側邊 agent |
-| `/gauge timeline` | 時間軸 |
+| `/gauge history` | History 視窗 |
+| `/gauge status` | 查一次 Claude 服務狀態 |
+| `/gauge slider on\|off` | 顯示或隱藏模型滑塊 |
 | `/gauge summary on\|off` | 時間軸的 AI 摘要（會用 token） |
-| `/gauge find <關鍵字>` | 跳到最近一則提到它的訊息 |
 | `/gauge marks on\|off` | 訊息上的時間軸色線 |
-| `/gauge strip on\|off` | 細條上的時間軸刻度 |
 | `/gauge footer auto\|on\|off` | 每輪回答下附一行用量；`auto`（預設）只在沒有客戶端能畫細條時開啟，例如雲端 session |
 
 上方細條只在終端與 Claude Code Desktop 顯示，手機 app 不顯示。右側面板要在終端全螢幕、寬度 110 欄以上才會停靠在右側。雲端 session 沒有可以畫 mod 介面的客戶端，所以只能看 `/gauge` 的文字快照。
@@ -92,7 +93,7 @@ claude plugin install context-gauge@kirishima-mods
 
 ### 讀寫範圍
 
-只讀 session 用量、每輪事件與時鐘。寫入只有畫面、記憶體中的狀態，以及保存在 `$.store` 的設定（面板是否折疊、設定頁的各項）。不讀寫專案檔案、不執行程式、不連網。
+只讀 session 用量、每輪事件與時鐘；唯一的連網是你按 ↻ Refresh 時查一次 status.claude.com。寫入只有畫面、記憶體中的狀態，以及保存在 `$.store` 的設定（面板是否折疊、設定頁的各項）。不讀寫專案檔案、不執行程式、不連網。
 
 會影響對話的只有：■ Stop、自動收尾（插入一段收尾提示）、/compact 規則設為 Auto 時的自動壓縮（壓縮本身會呼叫一次模型），以及你按下的模型、Fast、輸出風格、You should know 切換（透過 `/model`、`/effort`、`/fast`、`/plugin` 與 `/config`）。時間軸的 AI 摘要開啟時，每段會呼叫一次 Haiku。
 

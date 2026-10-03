@@ -204,6 +204,13 @@ const PICKER = {
   props: { title: 'Model', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 9 }, view: {} },
 } as const
 
+const HISTORY = {
+  plugin: 'context-gauge',
+  component: 'Pane',
+  requestId: 'gauge-timeline',
+  props: { title: 'History', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+} as const
+
 const run = ($: Engine, args: string) =>
   $.command.run({ command: 'gauge', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
 
@@ -350,7 +357,7 @@ test('the slider switches model and effort, and keeps Fable locked without Max',
   // The band keeps a small track and the name; the name opens the picker inside the band.
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await band.find({ key: 'model-chip' })).toBeDefined()
-  expect((await band.find({ key: 'model-track' }))?.props.width).toBe(15)
+  expect((await band.find({ key: 'model-track' }))?.props.width).toBe(23)
   expect(await band.find({ key: 'pick-0' })).toBeUndefined()
   await band.press({ key: 'model-chip' })
   expect(await band.find({ key: 'pick-0' })).toBeDefined()
@@ -443,13 +450,13 @@ test('dragging the band track across stops switches on release', async ($, on) =
   on('session.surfaces', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  await ui.resize({ columns: 15, rows: 1, in: 'model-track' })
-  // The band's capsule: a cap cell, then a stop every three cells. Press on 1,
+  await ui.resize({ columns: 23, rows: 1, in: 'model-track' })
+  // The band's capsule: a cap cell, then a stop every five cells. Press on 1,
   // drag to 4, let go.
   await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'model-track' })
-  await ui.pointer({ type: 'move', x: 6, y: 0, button: 'left', in: 'model-track' })
-  await ui.pointer({ type: 'move', x: 10, y: 0, button: 'left', in: 'model-track' })
-  await ui.pointer({ type: 'up', x: 10, y: 0, button: 'left', in: 'model-track' })
+  await ui.pointer({ type: 'move', x: 9, y: 0, button: 'left', in: 'model-track' })
+  await ui.pointer({ type: 'move', x: 16, y: 0, button: 'left', in: 'model-track' })
+  await ui.pointer({ type: 'up', x: 16, y: 0, button: 'left', in: 'model-track' })
   await clock.advance(1)
   expect(ran).toEqual(['/model opus', '/effort xhigh'])
   await ui.unmount()
@@ -469,7 +476,7 @@ test('a press on a position in the band picker switches and closes it', async ($
   await ui.unmount()
 })
 
-test('the timeline marks messages and fills the strip', async ($, on) => {
+test('the timeline marks messages, and History lists what was asked and done', async ($, on) => {
   engine(on)
   const scrolled: string[] = []
   on('ui.scroll', (_$, e) => {
@@ -498,19 +505,22 @@ test('the timeline marks messages and fills the strip', async ($, on) => {
   expect(texts.join('|')).toMatch(/fix the band layout · 4s/)
   await ui.unmount()
 
+  // History: what was asked, what Claude answered (free), how it went.
+  const history = await $.ui.mount({ ...HISTORY, surface: 'desktop' })
+  const lines = (await history.findAll({ type: 'Text' })).map(t => t.text).join('|')
+  expect((await history.find({ key: 'tl-turn-a' }))?.text).toBe('fix the band layout')
+  expect(lines).toMatch(/Claude: done/)
+  expect(lines).toMatch(/4s/)
+  await history.input({ key: 'history-filter', text: 'nothing like it' })
+  expect(await history.find({ key: 'tl-turn-a' })).toBeUndefined()
+  await history.press({ key: 'history-clear' })
+  expect(await history.find({ key: 'tl-turn-a' })).toBeDefined()
+  await history.unmount()
+
+  // The band has no strip and no search any more.
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await band.find({ key: 'tl-strip' }))?.props.width).toBe(2)
-  expect(await band.find({ type: 'Svg' })).toBeDefined()
-  // Hovering a tick swaps the meters for its line; nothing else moves.
-  await band.pointer({ type: 'move', x: 0, y: 0, in: 'tl-strip' })
-  expect(await band.find({ type: 'Svg' })).toBeUndefined()
-  expect((await band.findAll({ type: 'Text' })).map(t => t.text).join('|')).toMatch(/fix the band layout · 4s/)
-  await band.pointer({ type: 'leave', x: 0, y: 0, in: 'tl-strip' })
-  expect(await band.find({ type: 'Svg' })).toBeDefined()
-  // A press jumps back to it (this line came from turn.start: no message id to scroll to).
-  await band.pointer({ type: 'down', x: 0, y: 0, button: 'left', in: 'tl-strip' })
-  expect(scrolled).toEqual([])
-  expect(toasts.some(t => /no message to jump to/.test(t))).toBe(true)
+  expect(await band.find({ key: 'tl-strip' })).toBeUndefined()
+  expect(await band.find({ key: 'find' })).toBeUndefined()
   await band.unmount()
 
   await run($, 'marks off')
@@ -551,27 +561,55 @@ test('a narrow band keeps the model controls and drops the notes first', async (
   await wide.unmount()
 })
 
-test('/gauge find jumps to the latest earlier prompt holding the words', async ($, on) => {
+
+test('the status panel checks status.claude.com only on Refresh', async ($, on) => {
   engine(on)
-  const scrolled: string[] = []
-  on('ui.scroll', (_$, e) => {
-    scrolled.push((e as { to?: { requestId?: string } }).to?.requestId ?? '')
-    return {}
+  on('session.surfaces', () => ({ value: [] }))
+  const fetched: string[] = []
+  on('http.fetch', (_$, e) => {
+    fetched.push(String((e as { url?: string }).url))
+    return {
+      value: {
+        status: 200,
+        ok: true,
+        headers: {},
+        text: JSON.stringify({
+          status: { indicator: 'minor', description: 'Minor Service Outage' },
+          components: [
+            { name: 'claude.ai', status: 'operational' },
+            { name: 'Claude API (api.anthropic.com)', status: 'degraded_performance' },
+            { name: 'Claude Code', status: 'operational' },
+            { name: 'Group', status: 'operational', group: true },
+          ],
+          incidents: [{ name: 'Elevated errors on Opus', impact: 'minor', status: 'investigating' }],
+        }),
+      },
+    }
   })
-  on('session.surfaces', () => ({ value: ['desktop'] }))
-  on('turn.complete', (_$, e) => ({ text: e.answer }))
   await measured($, measure(60_000, 10))
-  for (const [id, text] of [['a', 'start Phase K'], ['b', 'finish Phase K and push'], ['c', 'now look at phase k again']] as const) {
-    await $.turn.start({ text, turnId: id })
-    await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: id, reason: 'answer' })
-  }
-  expect((await run($, 'find phase k and push')).text).toMatch(/finish Phase K and push/)
-  expect(scrolled).toEqual([])  // turn-started lines have no message to scroll to
-  expect((await run($, 'find nothing like this')).text).toMatch(/No earlier prompt/)
-  // The band's search row: Enter finds the latest match.
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  await band.press({ key: 'find' })
-  await band.input({ key: 'find-input', text: 'phase k' })
-  expect(toasts.some(t => /no message to jump to/.test(t))).toBe(true)
+  await band.press({ key: 'status' })
+  expect(fetched).toEqual([])
+  expect((await band.findAll({ type: 'Text' })).map(t => t.text).join('|')).toMatch(/not checked yet/)
+  await band.press({ key: 'status-refresh' })
+  expect(fetched).toEqual(['https://status.claude.com/api/v2/summary.json'])
+  const lines = (await band.findAll({ type: 'Text' })).map(t => t.text).join('|')
+  expect(lines).toMatch(/Minor Service Outage/)
+  expect(lines).toMatch(/Claude API \(api\.anthropic\.com\) slow/)
+  expect(lines).toMatch(/Elevated errors on Opus/)
+  expect(lines).not.toMatch(/Group/)
+  await band.press({ key: 'status-close' })
+  expect(fetched).toHaveLength(1)
+  await band.unmount()
+})
+
+test('the slider can be hidden while the name stays', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(60_000, 10))
+  await run($, 'slider off')
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await band.find({ key: 'model-track' })).toBeUndefined()
+  expect(await band.find({ key: 'model-chip' })).toBeDefined()
   await band.unmount()
 })

@@ -9,13 +9,15 @@ type Props = {
   locked: boolean[]
   active: number | null
   accent: string
-  // A bare track for the band: a stop every three cells, no labels.
+  // A bare track for the band: a stop every five cells, no labels.
   compact?: boolean
   // The compact track's unfilled color, matched to the theme.
   rail?: string
 }
 
-const STEP = 3
+// Two cells either side of a stop: a wider track is easier to drag.
+const PAD = 2
+const STEP = 2 * PAD + 1
 
 type State = { drag: number | null }
 
@@ -55,9 +57,9 @@ const Slider: ClientModule<Props, State> = (p, s) => {
       const bg = i <= at ? p.accent : rail
       const mark = i === at ? '●' : p.locked[i] ? '⊘' : '·'
       const fg = i === at ? '#ffffff' : i < at ? '#f3d9cf' : '#8a8d94'
-      if (i > 0) cells.push({ ch: ' ', bg: i <= at ? p.accent : rail })
+      if (i > 0) cells.push({ ch: ' '.repeat(PAD), bg: i <= at ? p.accent : rail })
       cells.push({ ch: mark, fg, bg, bold: i === at })
-      if (i < n - 1) cells.push({ ch: ' ', bg: i < at ? p.accent : rail })
+      if (i < n - 1) cells.push({ ch: ' '.repeat(PAD), bg: i < at ? p.accent : rail })
     }
     return (
       <Box flexDirection="row">

@@ -27,6 +27,7 @@ import type {
   Meter,
   ModelPrefs,
   Phase,
+  ServiceStatus,
   SettingsTab,
   Slot,
   ToolRow,
@@ -49,6 +50,7 @@ const DEFAULTS: GaugeSettings = {
   models: {
     isShown: true,
     hasMax: false,
+    isTrack: true,
     slots: [
       { model: 'sonnet', effort: 'low' },
       { model: 'sonnet', effort: 'high' },
@@ -57,7 +59,7 @@ const DEFAULTS: GaugeSettings = {
       { model: 'fable', effort: 'high' },
     ],
   },
-  timeline: { isAiSummary: false, isMarked: true, isStrip: true },
+  timeline: { isAiSummary: false, isMarked: true },
 }
 
 const meter = atom({ plugin: 'context-gauge', key: 'meter' } as const, null)
@@ -79,9 +81,9 @@ const current = atom({ plugin: 'context-gauge', key: 'current' } as const, {
 const timeline = atom({ plugin: 'context-gauge', key: 'timeline' } as const, [] as Entry[])
 const settingsTab = atom({ plugin: 'context-gauge', key: 'settingsTab' } as const, 'usage' as SettingsTab)
 const isPickerOpen = atom({ plugin: 'context-gauge', key: 'isPickerOpen' } as const, false)
-// The strip's hovered entry: the band shows its line in place of the meters.
-const stripHover = atom({ plugin: 'context-gauge', key: 'stripHover' } as const, null as string | null)
-const isSearchOpen = atom({ plugin: 'context-gauge', key: 'isSearchOpen' } as const, false)
+const historyQuery = atom({ plugin: 'context-gauge', key: 'historyQuery' } as const, '')
+const isStatusOpen = atom({ plugin: 'context-gauge', key: 'isStatusOpen' } as const, false)
+const serviceStatus = atom({ plugin: 'context-gauge', key: 'serviceStatus' } as const, null as ServiceStatus | null)
 
 const WRAP_DELAY_MS = 10_000
 const NOTIFY_AFTER_MS = 20_000
@@ -509,7 +511,7 @@ async function summarize($: EngineInterface, id: string, prompt: string, answer:
   }
 }
 
-const openTimeline = ($: EngineInterface) => $.ui.open({ id: TIMELINE_PANE, title: 'Timeline' })
+const openTimeline = ($: EngineInterface) => $.ui.open({ id: TIMELINE_PANE, title: 'History' })
 
 // The model picker opens as a small dialog: it takes the keys, Esc closes it.
 const openPicker = ($: EngineInterface) =>
@@ -524,30 +526,41 @@ async function jumpTo($: EngineInterface, id: string) {
   if (r.deny) $.ui.toast(`Could not jump there (${r.deny})`, { timeoutMs: 5000 })
 }
 
-// The latest earlier prompt whose words (or summary) hold `query`.
-async function findEntry($: EngineInterface, query: string) {
-  const q = query.trim().toLowerCase()
-  if (!q) return undefined
-  const list = await read($, timeline)
-  return [...list].reverse().find(x => x.status !== 'running' && `${x.text} ${x.summary ?? ''}`.toLowerCase().includes(q))
-}
+// ---------- Claude's service status ----------
 
-async function findAndJump($: EngineInterface, query: string) {
-  const x = await findEntry($, query)
-  if (!x) {
-    $.ui.toast(`No earlier prompt mentions “${query.trim()}”.`, { timeoutMs: 4000 })
-    return
+const STATUS_URL = 'https://status.claude.com/api/v2/summary.json'
+
+// Asks status.claude.com once; only the Refresh press calls it.
+async function refreshStatus($: EngineInterface) {
+  const at = await $.clock.now()
+  try {
+    const r = await $.http.fetch(STATUS_URL)
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    const d = JSON.parse(r.text) as {
+      status?: { indicator?: string; description?: string }
+      components?: { name?: string; status?: string; group?: boolean }[]
+      incidents?: { name?: string; impact?: string; status?: string }[]
+    }
+    await update($, serviceStatus, () => ({
+      at,
+      indicator: d.status?.indicator ?? 'unknown',
+      description: d.status?.description ?? '',
+      components: (d.components ?? [])
+        .filter(c => !c.group && c.name)
+        .slice(0, 8)
+        .map(c => ({ name: c.name!, status: c.status ?? 'unknown' })),
+      incidents: (d.incidents ?? []).slice(0, 3).map(i => ({ name: i.name ?? '', impact: i.impact ?? '', status: i.status ?? '' })),
+    }))
+  } catch (error) {
+    await update($, serviceStatus, x => ({
+      at,
+      indicator: 'unknown',
+      description: x?.description ?? '',
+      components: x?.components ?? [],
+      incidents: x?.incidents ?? [],
+      error: String(error).slice(0, 120),
+    }))
   }
-  await update($, isSearchOpen, () => false)
-  await jumpTo($, x.id)
-}
-
-async function onStrip($: EngineInterface, e: { data: unknown }) {
-  const d = (e.data ?? {}) as { hover?: number | null; jump?: number }
-  const list = (await read($, timeline)).slice(-STRIP_MAX)
-  if ('hover' in d) await update($, stripHover, () => (d.hover == null ? null : (list[d.hover]?.id ?? null)))
-  if (typeof d.jump === 'number' && list[d.jump]) await jumpTo($, list[d.jump]!.id)
-  return {}
 }
 
 // ---------- actions ----------
@@ -581,11 +594,11 @@ const COMMANDS = [
   '/gauge fast                toggle fast mode',
   '/gauge style [name]        next output style, or one by name',
   '/gauge ysk on|off          the You should know side agent',
-  '/gauge timeline            the session timeline',
+  '/gauge history             what you asked and what Claude did, per prompt',
   '/gauge summary on|off      AI summaries on the timeline (uses tokens)',
   '/gauge marks on|off        timeline marks on your messages',
-  '/gauge find <words>        jump to the latest earlier prompt with them',
-  '/gauge strip on|off        timeline strip above the prompt',
+  '/gauge slider on|off       the draggable model slider',
+  '/gauge status              Claude service status (checks status.claude.com)',
 ].join('\n')
 
 async function onSlide($: EngineInterface, e: { data: unknown }) {
@@ -617,7 +630,6 @@ export const register: Register = on => {
   // position the person let go on.
   on('ui.message', { element: 'model-slider' }, onSlide)
   on('ui.message', { element: 'model-track' }, onSlide)
-  on('ui.message', { element: 'tl-strip' }, onStrip)
 
   // Follow /config's theme (the SVG's text colors) and output style.
   on('config.set', async ($, e, next) => {
@@ -702,21 +714,22 @@ export const register: Register = on => {
       await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isAiSummary: a === 'on' } }))
       return { text: `AI summaries on the timeline: ${a}.` }
     }
-    if (sub === 'find') {
-      const query = e.args.trim().split(/\s+/).slice(1).join(' ')
-      const x = await findEntry($, query)
-      if (!x) return { text: query ? `No earlier prompt mentions “${query}”.` : 'Use /gauge find <words>.' }
-      await jumpTo($, x.id)
-      return { text: `${STATUS_DOT[x.status]} ${clock(x.at)}  ${x.text.slice(0, 80)}` }
+    if (sub === 'marks' && (a === 'on' || a === 'off')) {
+      await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isMarked: a === 'on' } }))
+      return { text: `Timeline marks on messages: ${a}.` }
     }
-    if ((sub === 'marks' || sub === 'strip') && (a === 'on' || a === 'off')) {
-      const key = sub === 'marks' ? 'isMarked' : 'isStrip'
-      await changeSettings($, x => ({ ...x, timeline: { ...x.timeline, [key]: a === 'on' } }))
-      return { text: `Timeline ${sub === 'marks' ? 'marks on messages' : 'strip'}: ${a}.` }
+    if (sub === 'slider' && (a === 'on' || a === 'off')) {
+      await changeSettings($, x => ({ ...x, models: { ...x.models, isTrack: a === 'on' } }))
+      return { text: `Model slider: ${a}.` }
     }
-    if (sub === 'timeline') {
+    if (sub === 'status') {
+      await refreshStatus($)
+      await update($, isStatusOpen, () => true)
+      return { text: await statusText($) }
+    }
+    if (sub === 'timeline' || sub === 'history') {
       const opened = await openTimeline($)
-      return { text: opened.isPlaced ? 'Timeline opened.' : await timelineText($) }
+      return { text: opened.isPlaced ? 'History opened.' : await timelineText($) }
     }
     if (sub === 'pane') {
       const opened = await $.ui.open({ id: PANE, title: 'Gauge' })
@@ -888,6 +901,7 @@ export const register: Register = on => {
         ...x,
         ms: e.durationMs,
         status: e.isAborted ? 'stopped' : e.reason === 'error' || e.reason === 'refusal' || x.errors > 0 ? 'error' : 'ok',
+        answer: firstLine(e.answer).slice(0, 200) || undefined,
       }))
       const entry = [...finished].reverse().find(x => x.ms === e.durationMs)
       if (entry && (await read($, settings)).timeline.isAiSummary) void summarize($, entry.id, entry.text, e.answer)
@@ -936,15 +950,20 @@ export const register: Register = on => {
 
     const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
     const chip = await drawChip($, e)
-    const ticks = await drawStrip($, e)
-    const card = await drawStripCard($, e)
-    const finder = <Button key="find" label="⌕" plain dimColor onPress={() => update($, isSearchOpen, x => !x)} />
+    const status = await read($, serviceStatus)
+    const statusColor_ = !status || status.error ? C.rule : status.indicator === 'none' ? C.ok : status.indicator === 'minor' ? C.warn : C.hot
+    const extras = (
+      <Box flexDirection="row" gap={1}>
+        <Button key="status" label="◉" plain dimColor onPress={() => update($, isStatusOpen, x => !x)} />
+        <Text color={statusColor_}>{status ? '●' : '○'}</Text>
+        <Button key="history" label="≡" plain dimColor onPress={() => openTimeline($)} />
+      </Box>
+    )
     // What the SVG line may take: the band's cells less the controls beside
     // it, at a conservative 8px a cell (a desktop UI font's cell is ~7-8px).
     const controlCells =
-      (chip ? 16 + 2 + (await chipNameLength($)) + 2 : 0) +
-      (ticks ? Math.min(STRIP_MAX, (await read($, timeline)).length) * 2 + 2 : 0) +
-      7
+      (chip ? ((await read($, settings)).models.isTrack ? 24 : 0) + 2 + (await chipNameLength($)) + 2 : 0) +
+      8
     const meterCells = Math.max(20, e.props.bodyColumns - controlCells - 2)
     const stripRoom = meterCells * 8
 
@@ -952,12 +971,11 @@ export const register: Register = on => {
       m && drawn && Svg ? (
         <Box flexDirection="row" alignItems="center" gap={2}>
           <Box width={meterCells} flexShrink={0}>
-            {card ?? <Svg source={strip(drawn, m.usd, look, stripRoom)} alt={alt(drawn, m.usd)} />}
+            <Svg source={strip(drawn, m.usd, look, stripRoom)} alt={alt(drawn, m.usd)} />
           </Box>
           <Box flexDirection="row" alignItems="center" gap={2} flexShrink={0}>
             {chip}
-            {ticks}
-            {finder}
+            {extras}
             {gear}
           </Box>
         </Box>
@@ -965,7 +983,7 @@ export const register: Register = on => {
         m && (
           <Box flexDirection="row" gap={1}>
             <Box width={meterCells} flexShrink={0} flexDirection="row" flexWrap="wrap">
-              {card ?? (
+              {(
                 <Box flexDirection="row" flexWrap="wrap">
                   <Text color={C.accent}>◆ </Text>
                   <Text dimColor>ctx </Text>
@@ -1014,8 +1032,7 @@ export const register: Register = on => {
             </Box>
             <Box flexDirection="row" gap={1} flexShrink={0}>
               {chip}
-              {ticks}
-              {finder}
+              {extras}
               {gear}
             </Box>
           </Box>
@@ -1041,7 +1058,7 @@ export const register: Register = on => {
         <Text> </Text>
         <Button key="pane" label="Panel" dimColor onPress={() => $.ui.open({ id: PANE, title: 'Gauge' })} />
         <Text> </Text>
-        <Button key="timeline" label="Timeline" dimColor onPress={() => openTimeline($)} />
+        <Button key="timeline" label="History" dimColor onPress={() => openTimeline($)} />
       </Box>
     )
 
@@ -1056,15 +1073,15 @@ export const register: Register = on => {
     )
 
     const picker = await drawInlinePicker($, e)
-    const search = await drawSearch($, e)
+    const statusPanel = await drawStatus($, e)
 
     return (
       <Box flexDirection="column">
         {wrapRow}
         {meterRow}
         {picker}
+        {statusPanel}
         {liveRow}
-        {search}
       </Box>
     )
   })
@@ -1280,6 +1297,7 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   const models = (
     <Box flexDirection="column">
       {head('Model picker', 'A chip above the prompt opens it. Click a part of a position to change it.')}
+      {row('Show slider', toggle('track-shown', s.models.isTrack, () => changeSettings($, x => ({ ...x, models: { ...x.models, isTrack: !x.models.isTrack } }))), <Text dimColor>the draggable track; the name stays</Text>)}
       {row('Show chip', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))))}
       {s.models.slots.map((slot, i) =>
         row(
@@ -1322,14 +1340,13 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
 
   const timelineTab = (
     <Box flexDirection="column">
-      {head('Timeline', 'One line per prompt: green done, red failed, amber stopped. Click a line to jump back.')}
+      {head('Timeline', 'Per prompt: green done, red failed, amber stopped. History lists them; a press jumps back.')}
       {row('On messages', toggle('marks-toggle', s.timeline.isMarked, () => changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isMarked: !x.timeline.isMarked } }))), <Text dimColor>a colored rule on each message; hover for a card</Text>)}
-      {row('Strip', toggle('strip-toggle', s.timeline.isStrip, () => changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isStrip: !x.timeline.isStrip } }))), <Text dimColor>a tick per prompt above the prompt</Text>)}
-      {row('Side panel', <Button key="timeline-open" label="Open" dimColor onPress={() => openTimeline($)} />)}
+      {row('History', <Button key="timeline-open" label="Open" dimColor onPress={() => openTimeline($)} />, <Text dimColor>what you asked and what Claude did</Text>)}
       {row(
         'AI summaries',
         toggle('summary-toggle', s.timeline.isAiSummary, () => changeSettings($, x => ({ ...x, timeline: { ...x.timeline, isAiSummary: !x.timeline.isAiSummary } }))),
-        <Text dimColor>one Haiku call per prompt (uses tokens)</Text>,
+        <Text dimColor>one Haiku call per prompt (uses tokens); the rest is free</Text>,
       )}
     </Box>
   )
@@ -1374,7 +1391,7 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   const n = s.models.slots.length
   return (
     <Box flexDirection="row" gap={1} flexShrink={0}>
-      {Client && (
+      {Client && s.models.isTrack && (
         <Client
           key="model-track"
           module="./slider.tsx"
@@ -1386,7 +1403,7 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
             compact: true,
             rail: (c.theme ?? '').startsWith('light') ? '#dcdce0' : '#3a3b40',
           }}
-          width={(n - 1) * 3 + 3}
+          width={(n - 1) * 5 + 3}
         />
       )}
       <Button
@@ -1461,53 +1478,67 @@ const entryCard = (x: Entry, now: number) =>
     .filter(Boolean)
     .join(' · ')
 
-const STRIP_MAX = 16
-
-// The strip: a tick per prompt, drawn by a Client so its ticks are colored,
-// easy to hit, and tell the band which one the pointer is on.
-async function drawStrip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
-  if (!(await read($, settings)).timeline.isStrip) return null
-  const list = (await read($, timeline)).slice(-STRIP_MAX)
-  if (!list.length) return null
-  const Client =
-    e.surface === 'terminal' || e.surface === 'desktop'
-      ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client
-      : undefined
-  if (!Client) return null
-  return <Client key="tl-strip" module="./ticks.tsx" props={{ colors: list.map(statusColor) }} width={list.length * 2} />
+// Claude's service status, inside the band: what status.claude.com said at the
+// last Refresh. Nothing is fetched until Refresh is pressed.
+const COMPONENT_LABEL: Record<string, string> = {
+  operational: 'up',
+  degraded_performance: 'slow',
+  partial_outage: 'partial outage',
+  major_outage: 'down',
+  under_maintenance: 'maintenance',
 }
 
-// Find an earlier prompt from the band: type words, Enter jumps to the latest
-// prompt holding them.
-async function drawSearch($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
-  if (!(await read($, isSearchOpen))) return null
+async function drawStatus($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
+  if (!(await read($, isStatusOpen))) return null
   const { Box, Text, Button } = $.ui.resolve(e)
-  const Input = e.surface === 'mobile' ? undefined : ($.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }).Input
-  if (!Input) return null
+  const st = await read($, serviceStatus)
+  const now = await $.clock.now()
+  const colorOf = (status: string) =>
+    status === 'operational' || status === 'none' ? C.ok : status === 'degraded_performance' || status === 'minor' || status === 'under_maintenance' ? C.warn : C.hot
   return (
-    <Box flexDirection="row" gap={1} alignItems="center">
-      <Text color={C.accent}>⌕</Text>
-      <Input key="find-input" placeholder="find an earlier prompt…" submitLabel="Jump" autoFocus onSubmit={value => void findAndJump($, value)} />
-      <Button key="find-close" label="✕" plain dimColor onPress={() => update($, isSearchOpen, () => false)} />
+    <Box flexDirection="column" borderStyle="round" borderColor={C.rule} paddingX={1}>
+      <Box flexDirection="row" gap={2}>
+        <Text bold>Claude status</Text>
+        {st ? (
+          <Text color={st.error ? C.hot : colorOf(st.indicator)}>{st.error ? `check failed: ${st.error}` : st.description || st.indicator}</Text>
+        ) : (
+          <Text dimColor>not checked yet</Text>
+        )}
+        {st && <Text dimColor>· {dur(now - st.at)} ago</Text>}
+        <Button key="status-refresh" label="↻ Refresh" plain onPress={() => refreshStatus($)} />
+        <Button key="status-close" label="✕" plain dimColor onPress={() => update($, isStatusOpen, () => false)} />
+      </Box>
+      {st && st.components.length > 0 && (
+        <Box flexDirection="row" flexWrap="wrap" gap={2}>
+          {st.components.map(c => (
+            <Box flexDirection="row">
+              <Text color={colorOf(c.status)}>● </Text>
+              <Text dimColor>
+                {c.name} {COMPONENT_LABEL[c.status] ?? c.status.replace(/_/g, ' ')}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {st?.incidents.map(i => (
+        <Text color={i.impact === 'none' || i.impact === 'minor' ? C.warn : C.hot} wrap="truncate">
+          ⚠ {i.name} ({i.status})
+        </Text>
+      ))}
     </Box>
   )
 }
 
-// The hovered tick's line, drawn where the meters were.
-async function drawStripCard($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
-  const id = await read($, stripHover)
-  if (!id) return null
-  const x = (await read($, timeline)).find(y => y.id === id)
-  if (!x) return null
-  const { Box, Text } = $.ui.resolve(e)
-  return (
-    <Box flexDirection="row">
-      <Text color={statusColor(x)}>▍ </Text>
-      <Text wrap="truncate">
-        {clock(x.at)} {entryCard(x, await $.clock.now())}
-      </Text>
-    </Box>
-  )
+async function statusText($: EngineInterface) {
+  const st = await read($, serviceStatus)
+  if (!st) return 'Not checked.'
+  if (st.error) return `Status check failed: ${st.error}`
+  const dot = (x: string) => (x === 'operational' || x === 'none' ? '🟢' : x === 'degraded_performance' || x === 'minor' || x === 'under_maintenance' ? '🟡' : '🔴')
+  return [
+    `${dot(st.indicator)} ${st.description}`,
+    ...st.components.map(c => `${dot(c.status)} ${c.name}: ${COMPONENT_LABEL[c.status] ?? c.status}`),
+    ...st.incidents.map(i => `⚠ ${i.name} (${i.status})`),
+  ].join('\n')
 }
 
 const PILL_FILL = '#e9b949'
@@ -1627,6 +1658,8 @@ async function drawModelRow($: EngineInterface, e: RenderInput<'AbovePrompt' | '
 
 const STATUS_DOT: Record<Entry['status'], string> = { ok: '🟢', error: '🔴', stopped: '🟡', running: '⚪' }
 
+const short = (text: string, n: number) => (text.length > n ? `${text.slice(0, n).trimEnd()}…` : text)
+
 async function timelineText($: EngineInterface) {
   const list = await read($, timeline)
   if (!list.length) return 'No prompts yet.'
@@ -1637,42 +1670,78 @@ async function timelineText($: EngineInterface) {
       const meta = [x.ms === null ? 'running' : dur(x.ms), x.tools ? `${x.tools} tools` : '', x.errors ? `${x.errors} failed` : '', x.files.join(', ')]
         .filter(Boolean)
         .join(' · ')
-      return `${STATUS_DOT[x.status]} ${clock(x.at)}  ${(x.summary ?? x.text).slice(0, 70)}\n      ${meta}`
+      return [
+        `${STATUS_DOT[x.status]} ${clock(x.at)}  You: ${short(x.text, 60)}`,
+        x.answer ? `      Claude: ${short(x.answer, 70)}` : '',
+        x.summary ? `      ✦ ${x.summary}` : '',
+        `      ${meta}`,
+      ]
+        .filter(Boolean)
+        .join('\n')
     })
     .join('\n')
 }
 
+// History: per prompt, the time, what you asked and what Claude answered (the
+// opening of each, free), the AI summary when on, and how the turn went. A
+// filter narrows it; a press on a prompt jumps back to it.
 async function drawTimeline($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
+  const Input = e.surface === 'mobile' ? undefined : ($.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }).Input
   await lookOf($)
-  const list = await read($, timeline)
+  const all = await read($, timeline)
+  const query = (await read($, historyQuery)).trim().toLowerCase()
+  const isAi = (await read($, settings)).timeline.isAiSummary
   await read($, tick)
   const now = await $.clock.now()
-  const color = (x: Entry) => (x.status === 'ok' ? C.ok : x.status === 'error' ? C.hot : x.status === 'stopped' ? C.warn : C.accent)
-  if (!list.length) return <Text dimColor>No prompts yet. Each prompt you send becomes a line here.</Text>
+  const list = query ? all.filter(x => `${x.text} ${x.answer ?? ''} ${x.summary ?? ''}`.toLowerCase().includes(query)) : all
+  const filter = Input && (
+    <Box flexDirection="row" gap={1} marginBottom={1}>
+      <Input key="history-filter" placeholder="filter…" value={query} submitLabel="Filter" onSubmit={value => update($, historyQuery, () => value)} />
+      {query && <Button key="history-clear" label="✕" plain dimColor onPress={() => update($, historyQuery, () => '')} />}
+    </Box>
+  )
+  if (!all.length) return <Text dimColor>No prompts yet. Each prompt you send is listed here.</Text>
   return (
     <Box flexDirection="column">
+      {filter}
+      {!list.length && <Text dimColor>Nothing matches “{query}”.</Text>}
       {[...list]
         .reverse()
-        .slice(0, 40)
+        .slice(0, 50)
         .map(x => {
           const meta = [
-            clock(x.at),
             x.ms === null ? `running ${dur(now - x.at)}` : dur(x.ms),
             x.tools ? `${x.tools} tools` : '',
             x.errors ? `${x.errors} failed` : '',
-            x.files.join(', '),
+            x.files.slice(0, 3).join(', '),
           ]
             .filter(Boolean)
             .join(' · ')
           return (
             <Box flexDirection="column" marginBottom={1}>
-              <Box flexDirection="row">
-                <Text color={color(x)}>▍</Text>
-                <Button key={`tl-${x.id}`} label={(x.summary ?? x.text).slice(0, 90)} plain onPress={() => jumpTo($, x.id)} />
+              <Box flexDirection="row" gap={1}>
+                <Text color={statusColor(x)}>●</Text>
+                <Text dimColor>{clock(x.at)}</Text>
+                <Button key={`tl-${x.id}`} label={short(x.text, 60)} plain onPress={() => jumpTo($, x.id)} />
               </Box>
-              <Box flexDirection="row">
-                <Text color={color(x)}>▍</Text>
+              {x.answer && (
+                <Box flexDirection="row" paddingLeft={2}>
+                  <Text dimColor wrap="truncate">Claude: {short(x.answer, 80)}</Text>
+                </Box>
+              )}
+              {x.summary && (
+                <Box flexDirection="row" paddingLeft={2}>
+                  <Text color={C.accent}>✦ </Text>
+                  <Text>{x.summary}</Text>
+                </Box>
+              )}
+              {!x.summary && isAi && x.ms !== null && now - (x.at + x.ms) < 60_000 && (
+                <Box paddingLeft={2}>
+                  <Text dimColor>✦ summarizing…</Text>
+                </Box>
+              )}
+              <Box paddingLeft={2}>
                 <Text dimColor>{meta}</Text>
               </Box>
             </Box>
