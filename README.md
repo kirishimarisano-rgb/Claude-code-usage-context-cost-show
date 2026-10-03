@@ -4,11 +4,11 @@
 
 ![preview](docs/preview-dark.png)
 
-Desktop 和手機 app 畫一行高的 SVG 細條（上方是輸入框上的細條，下方是面板與 `/gauge`），字體用系統字體（Windows 是 Segoe UI），跟 Desktop 其他介面一致；終端畫文字版。
+上面兩條是 Classic 風格（任務進行中、快滿時），最下面是 Terminal 風格。Desktop 和手機 app 用一行高的 SVG 畫用量，字體用系統字體（Windows 是 Segoe UI）；終端與 Terminal 風格用文字畫，永遠一行。
 
 輸入框上方的用量細條，加上可折疊的右側面板。
 
-- **Context**：用量百分比與 token 數，接近自動壓縮門檻時變紅並顯示 `⚠ auto-compact soon`
+- **Context**：用量百分比與 token 數，接近自動壓縮門檻時變紅並顯示 `compacts soon`
 - **額度**：5h / 7d 用量與重置倒數，以及本次 session 花費
 - **任務進行中**：思考、輸出、工具各花的時間，tok/s，工具時間軸，**■ Stop** 按鈕
 - **完成通知**：一輪超過 20 秒時，結束會跳 toast
@@ -95,7 +95,25 @@ claude plugin install context-gauge@kirishima-mods
 
 只讀 session 用量、每輪事件與時鐘；唯一的連網是你按 ↻ Refresh 時查一次 status.claude.com。寫入只有畫面、記憶體中的狀態，以及保存在 `$.store` 的設定（面板是否折疊、設定頁的各項）。不讀寫專案檔案、不執行程式。
 
+`/gauge` 系列指令的輸出會留在對話紀錄裡，模型讀得到（每次約幾十到一兩百 token；`/gauge history` 會帶出你先前訊息的開頭）。每輪回答下方那一行和所有細條、面板則只給你看。
+
 會影響對話的只有：■ Stop、自動收尾（插入一段收尾提示）、/compact 規則設為 Auto 時的自動壓縮（壓縮本身會呼叫一次模型），以及你按下的模型、Fast、輸出風格、You should know 切換（透過 `/model`、`/effort`、`/fast`、`/plugin` 與 `/config`）。時間軸的 AI 摘要開啟時，每段會呼叫一次 Haiku。
+
+### 安全性
+
+- 對外連線只有一個：你按 ↻ Refresh 時以 GET 讀 `https://status.claude.com/api/v2/summary.json`，不帶任何憑證。
+- 會呼叫的 Claude Code 指令固定為 `/model`、`/effort`、`/fast`、`/plugin enable|disable cc-plugin-you-should-know@builtin`，以及 `/config` 的 `outputStyle`；模型 id 只接受英數與 `. _ - [ ] :`，在輸入與切換時各檢查一次。
+- 不執行程式、不讀寫專案檔案；SVG 只放數字與固定標籤，不放你或 Claude 的文字；狀態頁回傳的文字有長度上限。
+- 自動收尾插入的提示、自動 /compact 都是固定內容，且預設關閉或只提醒。
+
+### 已知限制
+
+- 雲端 session 的客戶端不畫 mod 介面，只有文字（`/gauge` 與回答下方那一行）。
+- 手機 app 不畫細條；`/gauge` 那一列有按鈕。
+- 時間軸只記得 mod 載入後的訊息，重開 Claude Code 會清空；少數沒有訊息編號的回合不能跳回。
+- mod 讀不到你的方案，Fable 檔位要你在設定頁自己打開「Max plan」。
+- Fast mode 是否可用取決於帳號（可能需要 usage credits）。
+- 用滑塊切換模型時，對話裡會留下 `/model`、`/effort` 的紀錄。
 
 ### 開發
 

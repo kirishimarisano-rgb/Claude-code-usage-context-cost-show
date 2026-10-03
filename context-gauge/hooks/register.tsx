@@ -38,7 +38,6 @@ import type {
 const PANE = 'gauge'
 const SETTINGS_PANE = 'gauge-settings'
 const TIMELINE_PANE = 'gauge-timeline'
-const PICKER_PANE = 'gauge-model'
 const YSK = 'cc-plugin-you-should-know@builtin'
 
 const DEFAULTS: GaugeSettings = {
@@ -169,12 +168,47 @@ const stepSize = (size: Look['size'], d: number) => SIZES[Math.max(0, Math.min(2
 
 const clampPct = (n: number) => Math.max(30, Math.min(100, Math.round(n)))
 
+// The text band on one line: the richest form that fits `cells`, dropping the
+// delta, then the reset times, the token counts, the cost, then narrowing the
+// bars, and last the weekly window.
+function fitTextBand(m: Meter, ctx: number, now: number, cells: number) {
+  const pct = (n: number) => `${n}%`.length
+  const all = m.limits.map(x => x.kind)
+  const levels = [
+    { ctxBar: 16, blocks: 5, tokens: true, delta: true, resets: true, cost: true, kinds: all },
+    { ctxBar: 16, blocks: 5, tokens: true, delta: false, resets: true, cost: true, kinds: all },
+    { ctxBar: 16, blocks: 5, tokens: true, delta: false, resets: false, cost: true, kinds: all },
+    { ctxBar: 12, blocks: 5, tokens: false, delta: false, resets: false, cost: true, kinds: all },
+    { ctxBar: 10, blocks: 4, tokens: false, delta: false, resets: false, cost: false, kinds: all },
+    { ctxBar: 8, blocks: 3, tokens: false, delta: false, resets: false, cost: false, kinds: all },
+    { ctxBar: 6, blocks: 3, tokens: false, delta: false, resets: false, cost: false, kinds: ['five_hour'] },
+  ]
+  const width = (f: (typeof levels)[number]) => {
+    let w = 2 + 4 + f.ctxBar + 1 + pct(m.percent ?? 0)
+    if (f.tokens && m.tokens !== undefined) w += 1 + `${k(m.tokens)}/${k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}`.length
+    if (f.delta && m.delta) w += 2 + k(m.delta).length
+    if (ctx >= 0.9) w += 16
+    for (const x of m.limits) {
+      if (!f.kinds.includes(x.kind)) continue
+      w += 3 + limitLabel(x.kind).length + 1 + f.blocks + 1 + pct(x.percent)
+      if (f.resets) w += 1 + resetIn(x, now).length
+    }
+    if (f.cost && m.usd !== undefined) w += 3 + `$${m.usd.toFixed(2)}`.length
+    return w
+  }
+  return levels.find(f => width(f) <= cells) ?? levels[levels.length - 1]!
+}
+
 // The surface's `Svg`, where it draws one (every surface but the terminal).
 // The Terminal look draws text everywhere, as the terminal does.
 const svgOf = ($: EngineInterface, e: RenderInput, style: LookStyle) =>
   e.surface === 'terminal' || style === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
 
 // ---------- plumbing ----------
+
+// Background work (timers, a compaction, a summary) whose failure must not
+// surface as an unhandled rejection: it logs to the debug log and moves on.
+const quietly = (work: Promise<unknown>) => void work.catch(() => undefined)
 
 let ticker: Timer | null = null
 let wrapTimer: Timer | null = null
@@ -183,7 +217,7 @@ let isCompacting = false
 async function ensureTicker($: EngineInterface) {
   if (ticker) return
   ticker = $.clock.every(1000, () => {
-    void (async () => {
+    quietly((async () => {
       const [l, w] = [await read($, live), await read($, wrap)]
       if (!l && !w.pending) {
         ticker?.cancel()
@@ -191,7 +225,7 @@ async function ensureTicker($: EngineInterface) {
         return
       }
       await update($, tick, n => n + 1)
-    })()
+    })())
   })
 }
 
@@ -287,7 +321,7 @@ async function checkWrap($: EngineInterface, limits: readonly SessionRateLimit[]
     timeoutMs: WRAP_DELAY_MS,
   })
   wrapTimer?.cancel()
-  wrapTimer = $.clock.after(WRAP_DELAY_MS, () => void fireWrap($))
+  wrapTimer = $.clock.after(WRAP_DELAY_MS, () => quietly(fireWrap($)))
   await ensureTicker($)
 }
 
@@ -362,6 +396,8 @@ const MODEL_CHOICES = [
   'claude-fable-5-1',
 ]
 const EFFORTS: EffortName[] = ['low', 'medium', 'high', 'xhigh', 'max']
+// What a typed model id may hold: it becomes the argument of /model.
+const MODEL_ID = /^[A-Za-z0-9._:\-\[\]]{1,80}$/
 const EFFORT_SHORT: Record<EffortName, string> = { low: 'low', medium: 'med', high: 'high', xhigh: 'xhigh', max: 'max' }
 
 const modelLabel = (m: string) => {
@@ -395,12 +431,18 @@ const firstLine = (text: string | undefined) => (text ?? '').split('\n').find(l 
 
 // Switching runs the built-in commands, which cannot run inside a command's
 // own hook: the /gauge forms defer them past it.
-const later = ($: EngineInterface, fn: () => Promise<void>) => void $.clock.after(0, () => void fn())
+const later = ($: EngineInterface, fn: () => Promise<void>) => void $.clock.after(0, () => quietly(fn()))
 
 async function applySlot($: EngineInterface, i: number) {
   const s = await read($, settings)
   const slot = s.models.slots[i]
   if (!slot) return
+  // Settings are the person's, but a stored file can be edited by hand: only
+  // a well-formed id and a known effort ever reach /model and /effort.
+  if (!MODEL_ID.test(slot.model) || !EFFORTS.includes(slot.effort)) {
+    $.ui.toast(`Position ${i + 1} holds an invalid model or effort; fix it in /gauge settings → Models.`, { timeoutMs: 7000 })
+    return
+  }
   if (isLocked(slot, s.models)) {
     $.ui.toast(`${slotLabel(slot)} is for Max plans. On Max? Unlock it in /gauge settings → Models.`, { timeoutMs: 7000 })
     return
@@ -513,10 +555,6 @@ async function summarize($: EngineInterface, id: string, prompt: string, answer:
 
 const openTimeline = ($: EngineInterface) => $.ui.open({ id: TIMELINE_PANE, title: 'History' })
 
-// The model picker opens as a small dialog: it takes the keys, Esc closes it.
-const openPicker = ($: EngineInterface) =>
-  $.ui.open({ id: PICKER_PANE, title: 'Model', focus: true, closeOnEscape: true, rows: 9 })
-
 async function jumpTo($: EngineInterface, id: string) {
   if (id.startsWith('turn-')) {
     $.ui.toast('This line has no message to jump to.', { timeoutMs: 4000 })
@@ -543,13 +581,15 @@ async function refreshStatus($: EngineInterface) {
     }
     await update($, serviceStatus, () => ({
       at,
-      indicator: d.status?.indicator ?? 'unknown',
-      description: d.status?.description ?? '',
+      indicator: (d.status?.indicator ?? 'unknown').slice(0, 20),
+      description: (d.status?.description ?? '').slice(0, 80),
       components: (d.components ?? [])
         .filter(c => !c.group && c.name)
         .slice(0, 8)
-        .map(c => ({ name: c.name!, status: c.status ?? 'unknown' })),
-      incidents: (d.incidents ?? []).slice(0, 3).map(i => ({ name: i.name ?? '', impact: i.impact ?? '', status: i.status ?? '' })),
+        .map(c => ({ name: c.name!.slice(0, 60), status: (c.status ?? 'unknown').slice(0, 30) })),
+      incidents: (d.incidents ?? [])
+        .slice(0, 3)
+        .map(i => ({ name: (i.name ?? '').slice(0, 120), impact: (i.impact ?? '').slice(0, 20), status: (i.status ?? '').slice(0, 30) })),
     }))
   } catch (error) {
     await update($, serviceStatus, x => ({
@@ -616,12 +656,24 @@ export const register: Register = on => {
       description: 'Usage gauge; `pane`, `settings`, `timeline`, `model 1-5`, `fast`, `style`, `wrap …`, `compact …`',
       argumentHint: '[pane | settings | timeline | model 1-5 | fast | style … | wrap … | compact …]',
     })
-    await loadSettings($)
-    await update($, wrap, w => ({ ...w, pending: null }))
-    const collapsed = await $.store.get('isCollapsed')
-    if (typeof collapsed === 'boolean') await update($, isCollapsed, () => collapsed)
-    await refreshBreakdown($)
-    await loadModes($)
+    // Each step on its own: one that fails (a store, the /config rows) leaves
+    // the defaults in place, never the session without /gauge.
+    for (const step of [
+      () => loadSettings($),
+      () => update($, wrap, w => ({ ...w, pending: null })),
+      async () => {
+        const collapsed = await $.store.get('isCollapsed')
+        if (typeof collapsed === 'boolean') await update($, isCollapsed, () => collapsed)
+      },
+      () => refreshBreakdown($),
+      () => loadModes($),
+    ]) {
+      try {
+        await step()
+      } catch {
+        // keep going
+      }
+    }
 
     return next(e)
   })
@@ -695,7 +747,7 @@ export const register: Register = on => {
     }
     if (sub === 'models' && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, models: { ...x.models, isShown: a === 'on' } }))
-      return { text: `Model slider ${a}.` }
+      return { text: `Model chip ${a}.` }
     }
     if (sub === 'max' && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, models: { ...x.models, hasMax: a === 'on' } }))
@@ -736,6 +788,7 @@ export const register: Register = on => {
       return { text: opened.isPlaced ? 'Gauge pane opened.' : `Gauge pane waits: ${opened.reason}` }
     }
     if (sub === 'settings') return { text: await settingsText($) }
+    if (sub && sub !== 'show') return { text: `Unknown: /gauge ${sub}\n\`\`\`\n${COMMANDS}\n\`\`\`` }
     // A text snapshot for any client that draws the row as text; clients
     // that draw plugin trees replace it with the live gauge.
     return { text: await snapshot($) }
@@ -761,7 +814,7 @@ export const register: Register = on => {
       await refreshBreakdown($)
     }
     await checkWrap($, e.rateLimits)
-    if (e.changed.includes('context')) void checkCompact($)
+    if (e.changed.includes('context')) quietly(checkCompact($))
 
     return next(e)
   })
@@ -904,7 +957,7 @@ export const register: Register = on => {
         answer: firstLine(e.answer).slice(0, 200) || undefined,
       }))
       const entry = [...finished].reverse().find(x => x.ms === e.durationMs)
-      if (entry && (await read($, settings)).timeline.isAiSummary) void summarize($, entry.id, entry.text, e.answer)
+      if (entry && (await read($, settings)).timeline.isAiSummary) quietly(summarize($, entry.id, entry.text, e.answer))
       const mode = (await read($, settings)).footer
       const isShown = mode === 'on' || (mode === 'auto' && (await $.session.surfaces()).length === 0)
       if (isShown) {
@@ -937,15 +990,12 @@ export const register: Register = on => {
     if (!m && !l) return next(e)
     const look = await lookOf($)
     const now = await $.clock.now()
-    const isNarrow = e.props.bodyColumns < 90
     const { Box, Text, Button } = $.ui.resolve(e)
     const Svg = svgOf($, e, look.style)
     const sep = <Text color={C.rule}> │ </Text>
 
     const ctx = m ? ctxRatio(m) : 0
     const ctxColor = tone(ctx, 0.75, 0.9)
-    const [on1, off1] = bar(ctx, isNarrow ? 8 : 16)
-    const limits = (m?.limits ?? []).filter(x => !isNarrow || x.kind === 'five_hour')
     const drawn = m && readings(m, ctx, now, look.style)
 
     const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
@@ -982,53 +1032,59 @@ export const register: Register = on => {
       ) : (
         m && (
           <Box flexDirection="row" gap={1}>
-            <Box width={meterCells} flexShrink={0} flexDirection="row" flexWrap="wrap">
-              {(
-                <Box flexDirection="row" flexWrap="wrap">
-                  <Text color={C.accent}>◆ </Text>
-                  <Text dimColor>ctx </Text>
-                  <Text color={ctxColor}>{on1}</Text>
-                  <Text color={C.rule}>{off1}</Text>
-                  <Text color={ctxColor} bold>
-                    {' '}
-                    {m.percent ?? 0}%
-                  </Text>
-                  {!isNarrow && m.tokens !== undefined && (
-                    <Text dimColor>
+            <Box width={meterCells} flexShrink={0} flexDirection="row" overflow="hidden">
+              {(() => {
+                const fit = fitTextBand(m, ctx, now, meterCells)
+                const [c1, c2] = bar(ctx, fit.ctxBar)
+                return (
+                  <Box flexDirection="row">
+                    <Text color={C.accent}>◆ </Text>
+                    <Text dimColor>ctx </Text>
+                    <Text color={ctxColor}>{c1}</Text>
+                    <Text color={C.rule}>{c2}</Text>
+                    <Text color={ctxColor} bold>
                       {' '}
-                      {k(m.tokens)}/{k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}
+                      {m.percent ?? 0}%
                     </Text>
-                  )}
-                  {!isNarrow && m.delta ? (
-                    <Text dimColor>
-                      {' '}
-                      {m.delta > 0 ? '+' : ''}
-                      {k(m.delta)}
-                    </Text>
-                  ) : null}
-                  {ctx >= 0.9 && <Text color={C.hot}> ⚠ compacts soon</Text>}
-                  {limits.map(x => {
-                    const c = tone(x.percent / 100, 0.7, 0.9)
-                    const [a, b] = bar(x.percent / 100, 5, '▰', '▱')
-                    return (
+                    {fit.tokens && m.tokens !== undefined && (
+                      <Text dimColor>
+                        {' '}
+                        {k(m.tokens)}/{k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}
+                      </Text>
+                    )}
+                    {fit.delta && m.delta ? (
+                      <Text dimColor>
+                        {' '}
+                        {m.delta > 0 ? '+' : ''}
+                        {k(m.delta)}
+                      </Text>
+                    ) : null}
+                    {ctx >= 0.9 && <Text color={C.hot}> ⚠ compacts soon</Text>}
+                    {m.limits
+                      .filter(x => fit.kinds.includes(x.kind))
+                      .map(x => {
+                        const c = tone(x.percent / 100, 0.7, 0.9)
+                        const [a, b] = bar(x.percent / 100, fit.blocks, '▰', '▱')
+                        return (
+                          <Box flexDirection="row">
+                            {sep}
+                            <Text dimColor>{limitLabel(x.kind)} </Text>
+                            <Text color={c}>{a}</Text>
+                            <Text color={C.rule}>{b}</Text>
+                            <Text color={c}> {x.percent}%</Text>
+                            {fit.resets && <Text dimColor> {resetIn(x, now)}</Text>}
+                          </Box>
+                        )
+                      })}
+                    {fit.cost && m.usd !== undefined && (
                       <Box flexDirection="row">
                         {sep}
-                        <Text dimColor>{limitLabel(x.kind)} </Text>
-                        <Text color={c}>{a}</Text>
-                        <Text color={C.rule}>{b}</Text>
-                        <Text color={c}> {x.percent}%</Text>
-                        <Text dimColor> {resetIn(x, now)}</Text>
+                        <Text dimColor>${m.usd.toFixed(2)}</Text>
                       </Box>
-                    )
-                  })}
-                  {!isNarrow && m.usd !== undefined && (
-                    <Box flexDirection="row">
-                      {sep}
-                      <Text dimColor>${m.usd.toFixed(2)}</Text>
-                    </Box>
-                  )}
-                </Box>
-              )}
+                    )}
+                  </Box>
+                )
+              })()}
             </Box>
             <Box flexDirection="row" gap={1} flexShrink={0}>
               {chip}
@@ -1114,7 +1170,6 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawGauge($, e, e.props.bodyColumns))
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, ($, e) => drawSettings($, e))
   on('ui.render', { component: 'Pane', requestId: TIMELINE_PANE }, ($, e) => drawTimeline($, e))
-  on('ui.render', { component: 'Pane', requestId: PICKER_PANE }, ($, e) => drawPicker($, e))
 
   // The /gauge rows draw live in the transcript on every client that draws
   // plugin trees: the mobile app draws no band and places no pane.
@@ -1316,7 +1371,11 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
                 key={`slot-${i}-custom`}
                 placeholder={`${i + 1}: ${slot.model}`}
                 submitLabel="Set"
-                onSubmit={value => void (value.trim() && setSlot(i, { model: value.trim() }))}
+                onSubmit={value => {
+                  const id = value.trim()
+                  if (MODEL_ID.test(id)) void setSlot(i, { model: id })
+                  else $.ui.toast('A model id is letters, digits and . _ - [ ] : only.', { timeoutMs: 5000 })
+                }}
               />
             ))}
           </Box>
@@ -1434,7 +1493,7 @@ const CLAUDE = '#c96442'
 // mobile), a press per position, fast mode, output style, close.
 async function drawInlinePicker($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   if (!(await read($, isPickerOpen))) return null
-  const { Box, Text, Button } = $.ui.resolve(e)
+  const { Box, Button } = $.ui.resolve(e)
   const s = await read($, settings)
   const c = await read($, current)
   const at = activeSlot(c, s.models)

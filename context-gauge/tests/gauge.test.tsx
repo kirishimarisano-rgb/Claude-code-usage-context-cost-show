@@ -34,9 +34,9 @@ const toasts: string[] = []
 let last: Measure = measure(0, 0)
 
 // The engine beneath the plugin: clock, usage figures, measurement, turns.
-function engine(on: On, onAbort: (turnId: string) => void = () => {}) {
+function engine(on: On, onAbort: (turnId: string) => void = () => {}, stored: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on)
+  mock.store(on, stored)
   on('session.usage', () => ({
     value: {
       startedAt: 0,
@@ -197,11 +197,11 @@ test('auto wrap-up waits for a running task, then fires once', async ($, on) => 
   expect(sent()).toBe(1)
 })
 
+// The /gauge model row: the full picker, in the transcript.
 const PICKER = {
   plugin: 'context-gauge',
-  component: 'Pane',
-  requestId: 'gauge-model',
-  props: { title: 'Model', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 9 }, view: {} },
+  component: 'CommandOutput',
+  props: { command: 'gauge', args: 'model', text: '', isErrored: false },
 } as const
 
 const HISTORY = {
@@ -612,4 +612,62 @@ test('the slider can be hidden while the name stays', async ($, on) => {
   expect(await band.find({ key: 'model-track' })).toBeUndefined()
   expect(await band.find({ key: 'model-chip' })).toBeDefined()
   await band.unmount()
+})
+
+test('the Terminal look keeps the band on one line at any width', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(95_000, 57))
+  await run($, 'look terminal')
+  await run($, 'models off')
+  for (const columns of [200, 120, 80, 60, 45]) {
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: columns } })
+    const meters = await ui.find({ type: 'Box', key: undefined, text: /◆ ctx/ })
+    const shown = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+    // Everything the band draws on its meter line, up to the gear, fits the width.
+    const line = shown.slice(shown.indexOf('◆'), shown.indexOf('⚙') === -1 ? undefined : shown.indexOf('⚙'))
+    expect(meters).toBeDefined()
+    expect(line.length).toBeLessThanOrEqual(columns)
+    if (columns >= 120) expect(shown).toMatch(/95k\/200k/)
+    if (columns <= 60) expect(shown).not.toMatch(/95k\/200k/)
+    await ui.unmount()
+  }
+})
+
+test('an unknown /gauge word answers with the usage, and a bad model id is refused', async ($, on) => {
+  engine(on)
+  toasts.length = 0
+  on('session.surfaces', () => ({ value: [] }))
+  expect((await run($, 'bogus')).text).toMatch(/Unknown: \/gauge bogus[\s\S]*\/gauge model 1-5/)
+  const row = {
+    plugin: 'context-gauge',
+    component: 'CommandOutput',
+    props: { command: 'gauge', args: 'settings', text: '', isErrored: false },
+  } as const
+  const ui = await $.ui.mount({ ...row, surface: 'desktop' })
+  await ui.press({ key: 'tab-models' })
+  await ui.input({ key: 'slot-0-custom', text: 'opus; rm -rf /' })
+  expect((await ui.find({ key: 'slot-0-model' }))?.text).toMatch(/Sonnet/)
+  expect(toasts.some(t => /A model id is/.test(t))).toBe(true)
+  await ui.unmount()
+})
+
+test('a hand-edited position with a malformed model id never reaches /model', async ($, on) => {
+  const clock = engine(on, undefined, {
+    settings: {
+      models: { isShown: true, isTrack: true, hasMax: false, slots: [{ model: 'opus; /plugin install x', effort: 'high' }] },
+    },
+  })
+  const ran = commands(on)
+  toasts.length = 0
+  on('session.surfaces', () => ({ value: [] }))
+  on('command.register', () => ({ value: { name: 'gauge' } }) as never)
+  on('config.list', () => ({ value: [] }))
+  on('settings.read', () => ({ value: {} }))
+  on('session.start', () => ({ cwd: '/tmp' }))
+  await $.session.start({ source: 'startup', cwd: '/tmp', sessionId: 's' } as never)
+  await run($, 'model 1')
+  await clock.advance(1)
+  expect(ran).toEqual([])
+  expect(toasts.some(t => /invalid model or effort/.test(t))).toBe(true)
 })
