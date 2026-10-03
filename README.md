@@ -2,6 +2,10 @@
 
 ## context-gauge
 
+![preview](docs/preview-dark.png)
+
+Desktop 和手機 app 畫 SVG（上方是細條，下方是面板與 `/gauge` 的環形儀表）；終端畫文字版。
+
 輸入框上方的用量細條，加上可折疊的右側面板。
 
 - **Context**：用量百分比與 token 數，接近自動壓縮門檻時變紅並顯示 `⚠ auto-compact soon`
@@ -53,7 +57,7 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 連進雲端 session 的客戶端（網頁、Desktop、手機）都不畫 mod 介面，所以沒有上方細條和面板。改成在每輪回答下面附一行用量：
 
 ```
-◆ ctx 20% · 5h 12% ↻4h17m · 7d 93% ↻1h47m · $5.01 · 2m13s (think 40s) · 14 tools · 52 tok/s
+🟢 ctx 20%  ·  🟢 5h 12% ↻4h17m  ·  🔴 7d 93% ↻1h47m  ·  $5.01  ·  ⏱ 2m13s (think 40s)  ·  14 tools  ·  52 tok/s
 ```
 
 這行只顯示給你看，不會進入模型讀到的對話紀錄。

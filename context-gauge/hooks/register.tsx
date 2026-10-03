@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderInput, SessionRateLimit, Timer } from 'claude-code'
+import type { ElementConstructor, EngineInterface, Register, RenderInput, SessionRateLimit, SvgProps, Timer } from 'claude-code'
 
+import { alt, readings, rings, strip } from './svg'
 import type { FooterMode, Limit, Live, Meter, Phase, ToolRow, TurnRow, Wrap } from '../types'
 
 const P = 'context-gauge'
@@ -91,6 +92,10 @@ const PHASE: Record<Phase, string> = {
   responding: '◑ writing',
   tool: '⚙ tools',
 }
+
+// The surface's `Svg`, where it draws one (every surface but the terminal).
+const svgOf = ($: EngineInterface, e: RenderInput) =>
+  e.surface === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
 
 // ---------- plumbing ----------
 
@@ -413,7 +418,11 @@ export const register: Register = on => {
     const [on1, off1] = bar(ctx, isNarrow ? 8 : 16)
     const limits = (m?.limits ?? []).filter(x => !isNarrow || x.kind === 'five_hour')
 
-    const meterRow = m && (
+    const Svg = svgOf($, e)
+    const drawn = m && readings(m, ctx, now)
+    const meterRow = m && drawn && Svg ? (
+      <Svg source={strip(drawn, m.usd)} alt={alt(drawn, m.usd)} />
+    ) : m && (
       <Box flexDirection="row" flexWrap="wrap">
         <Text color={C.accent}>◆ </Text>
         <Text dimColor>ctx </Text>
@@ -512,19 +521,24 @@ export const register: Register = on => {
   )
 }
 
+const DOT = (ratio: number, warnAt: number, hotAt: number) => (ratio >= hotAt ? '🔴' : ratio >= warnAt ? '🟡' : '🟢')
+
 async function footerLine($: EngineInterface, row: TurnRow) {
   const m = await read($, meter)
   const now = await $.clock.now()
   const parts: string[] = []
   if (m) {
-    parts.push(`ctx ${m.percent ?? 0}%` + (ctxRatio(m) >= 0.9 ? ' ⚠ auto-compact soon' : ''))
-    for (const x of m.limits) parts.push(`${limitLabel(x.kind)} ${x.percent}% ${resetIn(x, now)}`.trim())
+    const r = ctxRatio(m)
+    parts.push(`${DOT(r, 0.75, 0.9)} ctx ${m.percent ?? 0}%` + (r >= 0.9 ? ' auto-compact soon' : ''))
+    for (const x of m.limits) {
+      parts.push(`${DOT(x.percent / 100, 0.7, 0.9)} ${limitLabel(x.kind)} ${x.percent}% ${resetIn(x, now)}`.trim())
+    }
     if (m.usd !== undefined) parts.push(`$${m.usd.toFixed(2)}`)
   }
-  parts.push(`${dur(row.ms)}` + (row.thinkMs ? ` (think ${dur(row.thinkMs)})` : ''))
+  parts.push(`⏱ ${dur(row.ms)}` + (row.thinkMs ? ` (think ${dur(row.thinkMs)})` : ''))
   if (row.tools) parts.push(`${row.tools} tools`)
   if (row.tps) parts.push(`${row.tps} tok/s`)
-  return `◆ ${parts.join(' · ')}`
+  return parts.join('  ·  ')
 }
 
 async function snapshot($: EngineInterface) {
@@ -532,25 +546,27 @@ async function snapshot($: EngineInterface) {
   const l = await read($, live)
   const w = await read($, wrap)
   const now = await $.clock.now()
-  const lines: string[] = []
-  if (m) {
-    const [a, b] = bar(ctxRatio(m), 16)
-    lines.push(
-      `ctx ${a}${b} ${m.percent ?? 0}%  ${k(m.tokens ?? 0)}/${k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}` +
-        (ctxRatio(m) >= 0.9 ? '  ⚠ auto-compact soon' : ''),
-    )
-    for (const x of m.limits) {
-      const [c, d] = blocks(x.percent / 100, 10)
-      lines.push(`${limitLabel(x.kind).padEnd(3)} ${c}${d} ${x.percent}%  ${resetIn(x, now)}`)
-    }
-    if (m.limits.length === 0) lines.push('5h/7d: no reading yet (shown after the next reply, on a subscription)')
-    if (m.usd !== undefined) lines.push(`cost $${m.usd.toFixed(2)}`)
+  const rows: string[] = []
+  const line = (dot: string, label: string, ratio: number, value: string, note: string) => {
+    const [a, b] = bar(ratio, 14, '█', '░')
+    rows.push(`${dot} ${label.padEnd(7)} ${a}${b} ${value.padStart(4)}  ${note}`.trimEnd())
   }
-  if (l) lines.push(`${PHASE[l.phase]} · turn ${dur(now - l.startedAt)} · ${l.tools.length} tools`)
-  lines.push(`auto wrap-up ${w.isOn ? `on at ${w.atPercent}%` : 'off'}`)
+  if (m) {
+    const r = ctxRatio(m)
+    const limit = m.isAutoCompact && m.threshold ? m.threshold : m.window
+    line(DOT(r, 0.75, 0.9), 'CONTEXT', r, `${m.percent ?? 0}%`, r >= 0.9 ? 'auto-compact soon' : `${k(m.tokens ?? 0)} / ${k(limit)}`)
+    for (const kind of ['five_hour', 'seven_day']) {
+      const x = m.limits.find(y => y.kind === kind)
+      const label = kind === 'five_hour' ? '5 HOUR' : '7 DAY'
+      if (x) line(DOT(x.percent / 100, 0.7, 0.9), label, x.percent / 100, `${x.percent}%`, resetIn(x, now).replace('↻', 'resets '))
+      else rows.push(`⚪ ${label.padEnd(7)} ${'░'.repeat(14)}    —  after first reply`)
+    }
+    if (m.usd !== undefined) rows.push(`💰 COST    $${m.usd.toFixed(2)}`)
+  }
+  if (l) rows.push(`${PHASE[l.phase]} · turn ${dur(now - l.startedAt)} · ${l.tools.length} tools`)
   const surfaces = await $.session.surfaces()
-  lines.push(`clients: ${surfaces.join(', ') || 'none'}`)
-  return '```\n' + lines.join('\n') + '\n```'
+  const foot = `auto wrap-up ${w.isOn ? `on at ${w.atPercent}%` : 'off'} · clients: ${surfaces.join(', ') || 'none'}`
+  return '```\n' + rows.join('\n') + '\n```\n' + foot
 }
 
 async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>, columns: number) {
@@ -600,8 +616,34 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
       )
     }
 
+    const Svg = svgOf($, e)
+    const drawn = m && readings(m, ctx, now)
+    const hero =
+      m && drawn && Svg ? (
+        <Svg
+          source={rings(drawn, m.usd, l ? `${PHASE[l.phase]} ${dur(now - l.phaseSince)}` : null)}
+          alt={alt(drawn, m.usd)}
+        />
+      ) : null
+
     const [c1, c2] = bar(ctx, barW)
-    const ctxSection = m && (
+    const ctxSection = m && hero ? (
+      <Box flexDirection="column">
+        {head('Context')}
+        <Text dimColor>
+          {k(m.tokens ?? 0)} of {k(m.window)}
+          {m.isAutoCompact && m.threshold ? ` · auto-compact at ${k(m.threshold)}` : ' · auto-compact off'}
+        </Text>
+        {m.categories.slice(0, 8).map(c => (
+          <Box flexDirection="row" justifyContent="space-between" width={width}>
+            <Text dimColor wrap="truncate">
+              {c.name}
+            </Text>
+            <Text dimColor>{k(c.tokens)}</Text>
+          </Box>
+        ))}
+      </Box>
+    ) : m && (
       <Box flexDirection="column">
         {head('Context')}
         <Box flexDirection="row">
@@ -627,7 +669,7 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
       </Box>
     )
 
-    const limitSection = m && m.limits.length > 0 && (
+    const limitSection = !hero && m && m.limits.length > 0 && (
       <Box flexDirection="column">
         {head('Usage limits')}
         {m.limits.map(x => {
@@ -732,6 +774,7 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
     return (
       <Box flexDirection="column">
         {toggle}
+        {hero}
         {ctxSection}
         {limitSection}
         {turnSection}

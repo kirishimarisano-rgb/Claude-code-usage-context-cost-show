@@ -42,6 +42,13 @@ function engine(on: On, onAbort: (turnId: string) => void = () => {}) {
   })
 }
 
+// The text a drawing shows: its Text elements, or its Svg's alt where it draws one.
+async function shown(ui: { findAll: (q: { type: string }) => Promise<{ text: string; props: Record<string, unknown> }[]> }) {
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  const svgs = (await ui.findAll({ type: 'Svg' })).map(t => String(t.props.alt))
+  return [...texts, ...svgs].join(' | ')
+}
+
 async function measured($: Engine, m: Measure) {
   last = m
   await $.session.measure(m)
@@ -52,15 +59,18 @@ test('band shows context and 5h, and turns red near auto-compact', async ($, on)
   await measured($, measure(60_000, 42))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ type: 'Text', text: /30%/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /42%/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /auto-compact soon/ })).toBeUndefined()
+    expect(await shown(ui)).toMatch(/30%/)
+    expect(await shown(ui)).toMatch(/42%/)
+    expect(await shown(ui)).not.toMatch(/auto-compact soon/)
     await ui.unmount()
   }
+  expect(await (await $.ui.mount({ ...BAND, surface: 'desktop' })).find({ type: 'Svg' })).toBeDefined()
   await measured($, measure(190_000, 42))
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /auto-compact soon/ })).toBeDefined()
-  await ui.unmount()
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await shown(ui)).toMatch(/auto-compact soon/)
+    await ui.unmount()
+  }
 })
 
 test('a running turn shows a Stop button that aborts it', async ($, on) => {
@@ -84,11 +94,10 @@ test('on mobile the /gauge output row is the live gauge', async ($, on) => {
     props: { command: 'gauge', args: '', text: 'Context gauge (live).', isErrored: false },
   } as const
   const ui = await $.ui.mount({ ...row, surface: 'mobile' })
-  expect(await ui.find({ type: 'Text', text: /CONTEXT/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /30%/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /42%/ })).toBeDefined()
+  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  expect(await shown(ui)).toMatch(/context 30%.*5 hour 42%/)
   await measured($, measure(120_000, 55))
-  expect(await ui.find({ type: 'Text', text: /60%/ })).toBeDefined()
+  expect(await shown(ui)).toMatch(/context 60%.*5 hour 55%/)
   await ui.unmount()
 })
 
@@ -103,9 +112,10 @@ test('the side pane draws and folds', async ($, on) => {
   } as const
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...pane, surface })
-    expect(await ui.find({ type: 'Text', text: /USAGE LIMITS/ })).toBeDefined()
+    expect(await shown(ui)).toMatch(/42%/)
+    expect(await ui.find({ type: 'Text', text: /CONTEXT/ })).toBeDefined()
     await ui.press({ key: 'fold' })
-    expect(await ui.find({ type: 'Text', text: /USAGE LIMITS/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /CONTEXT/ })).toBeUndefined()
     await ui.press({ key: 'fold' })
     await ui.unmount()
   }
@@ -121,8 +131,8 @@ test('/gauge answers a text snapshot for clients that draw text', async ($, on) 
     origin: { kind: 'composer' },
     presentation: { isFullscreen: false, columns: 100 },
   })
-  expect(r.text).toMatch(/ctx .* 30%/)
-  expect(r.text).toMatch(/5h .* 42%/)
+  expect(r.text).toMatch(/🟢 CONTEXT .* 30%  60k \/ 200k/)
+  expect(r.text).toMatch(/🟢 5 HOUR .* 42%/)
   expect(r.text).toMatch(/clients: terminal/)
 })
 
@@ -133,7 +143,7 @@ test('with no client drawing, a gauge line goes under each answer', async ($, on
   await measured($, measure(60_000, 42))
   await $.turn.start({ text: 'go', turnId: 't2' })
   const r = await $.turn.complete({ answer: 'done', durationMs: 5000, isAborted: false, turnId: 't2', reason: 'answer' })
-  expect(r.text).toMatch(/^◆ ctx 30% · 5h 42%.* · \$1\.84 · 5s/)
+  expect(r.text).toBe('🟢 ctx 30%  ·  🟢 5h 42%  ·  $1.84  ·  ⏱ 5s')
 })
 
 test('with a terminal attached, the answer is left alone', async ($, on) => {
