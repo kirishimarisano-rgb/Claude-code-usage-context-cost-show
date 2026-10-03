@@ -50,9 +50,19 @@ export type TurnRow = {
 
 export type FooterMode = 'auto' | 'on' | 'off'
 
+export type CompactMode = 'off' | 'remind' | 'auto'
+
+// One wrap-up rule: on or off, and the percent of its limit window it fires at.
+export type WrapRule = { isOn: boolean; at: number }
+
+export type GaugeSettings = {
+  wrap5h: WrapRule
+  wrap7d: WrapRule
+  compact: { mode: CompactMode; at: number }
+  footer: FooterMode
+}
+
 export type Wrap = {
-  isOn: boolean
-  atPercent: number
   pending: { deadline: number; key: string; label: string } | null
   fired: string[]
 }
@@ -64,9 +74,10 @@ declare module 'claude-code' {
       live: Live | null
       history: TurnRow[]
       isCollapsed: boolean
+      settings: GaugeSettings
       wrap: Wrap
       tick: number
-      footer: FooterMode
+      compactAt: number | null
     }
   }
 }

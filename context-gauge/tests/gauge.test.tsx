@@ -69,14 +69,14 @@ test('band shows context and 5h, and turns red near auto-compact', async ($, on)
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await shown(ui)).toMatch(/30%/)
     expect(await shown(ui)).toMatch(/42%/)
-    expect(await shown(ui)).not.toMatch(/auto-compact soon/)
+    expect(await shown(ui)).not.toMatch(/compacts soon/)
     await ui.unmount()
   }
   expect(await (await $.ui.mount({ ...BAND, surface: 'desktop' })).find({ type: 'Svg' })).toBeDefined()
   await measured($, measure(190_000, 42))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await shown(ui)).toMatch(/auto-compact soon/)
+    expect(await shown(ui)).toMatch(/compacts soon/)
     await ui.unmount()
   }
 })
@@ -121,9 +121,9 @@ test('the side pane draws and folds', async ($, on) => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...pane, surface })
     expect(await shown(ui)).toMatch(/42%/)
-    expect(await ui.find({ type: 'Text', text: /CONTEXT/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /this session/ })).toBeDefined()
     await ui.press({ key: 'fold' })
-    expect(await ui.find({ type: 'Text', text: /CONTEXT/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /this session/ })).toBeUndefined()
     await ui.press({ key: 'fold' })
     await ui.unmount()
   }
@@ -187,4 +187,52 @@ test('auto wrap-up waits for a running task, then fires once', async ($, on) => 
   await $.turn.start({ text: 'again', turnId: 't5' })
   await clock.advance(11_000)
   expect(sent()).toBe(1)
+})
+
+const run = ($: Engine, args: string) =>
+  $.command.run({ command: 'gauge', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
+
+test('the settings page sets each wrap-up rule and the /compact rule', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  await measured($, measure(60_000, 10))
+  const row = {
+    plugin: 'context-gauge',
+    component: 'CommandOutput',
+    props: { command: 'gauge', args: 'settings', text: '', isErrored: false },
+  } as const
+  for (const surface of ['terminal', 'desktop', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...row, surface })
+    expect(await ui.find({ key: 'wrap5h-toggle' })).toBeDefined()
+    await ui.unmount()
+  }
+  const ui = await $.ui.mount({ ...row, surface: 'desktop' })
+  await ui.press({ key: 'wrap5h-toggle' })
+  await ui.press({ key: 'wrap5h-up' })
+  await ui.press({ key: 'wrap7d-down' })
+  await ui.press({ key: 'compact-mode' })
+  await ui.press({ key: 'compact-down' })
+  await ui.unmount()
+  const text = (await run($, 'settings')).text
+  expect(text).toMatch(/5-hour limit   at 95%/)
+  expect(text).toMatch(/weekly limit   off/)
+  expect(text).toMatch(/\/compact       auto at 65%/)
+})
+
+test('/gauge wrap and /gauge compact set the rules by command', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  expect((await run($, 'wrap 7d 92')).text).toBe('Wrap-up: 5h off, 7d at 92%.')
+  expect((await run($, 'wrap 5h on')).text).toBe('Wrap-up: 5h at 90%, 7d at 92%.')
+  expect((await run($, 'compact 80')).text).toBe('/compact rule: remind at 80%.')
+  expect((await run($, 'compact off')).text).toBe('/compact rule: off.')
+})
+
+test('the /compact rule reminds once when idle past it', async ($, on) => {
+  engine(on)
+  toasts.length = 0
+  await run($, 'compact 70')
+  await measured($, measure(150_000, 10))
+  await measured($, measure(152_000, 10))
+  expect(toasts.filter(t => /Context 75%: a good point to \/compact/.test(t))).toHaveLength(1)
 })

@@ -1,26 +1,29 @@
 import { atom, read, update } from 'claude-code'
 import type { ElementConstructor, EngineInterface, Register, RenderInput, SessionRateLimit, SvgProps, Timer } from 'claude-code'
 
-import { alt, readings, rings, strip } from './svg'
-import type { FooterMode, Limit, Live, Meter, Phase, ToolRow, TurnRow, Wrap } from '../types'
+import { alt, readings, stack, strip, TONE } from './svg'
+import type { CompactMode, FooterMode, Limit, Live, Meter, Phase, WrapRule, GaugeSettings, ToolRow, TurnRow } from '../types'
 
-const P = 'context-gauge'
 const PANE = 'gauge'
+const SETTINGS_PANE = 'gauge-settings'
+
+const DEFAULTS: GaugeSettings = {
+  wrap5h: { isOn: false, at: 90 },
+  wrap7d: { isOn: false, at: 95 },
+  compact: { mode: 'remind', at: 70 },
+  footer: 'auto',
+}
 
 const meter = atom({ plugin: 'context-gauge', key: 'meter' } as const, null)
 const live = atom({ plugin: 'context-gauge', key: 'live' } as const, null)
 const history = atom({ plugin: 'context-gauge', key: 'history' } as const, [])
 const isCollapsed = atom({ plugin: 'context-gauge', key: 'isCollapsed' } as const, false)
-const wrap = atom({ plugin: 'context-gauge', key: 'wrap' } as const, {
-  isOn: false,
-  atPercent: 90,
-  pending: null,
-  fired: [],
-} as Wrap)
+const settings = atom({ plugin: 'context-gauge', key: 'settings' } as const, DEFAULTS)
+const wrap = atom({ plugin: 'context-gauge', key: 'wrap' } as const, { pending: null, fired: [] as string[] })
 const tick = atom({ plugin: 'context-gauge', key: 'tick' } as const, 0)
-// `auto`: a gauge line under each answer when no client draws the band
-// (a cloud session seen from the web, desktop or mobile app).
-const footer = atom({ plugin: 'context-gauge', key: 'footer' } as const, 'auto' as FooterMode)
+// The context percent the /compact rule last acted at; cleared once the
+// context drops below the rule again (after a compaction).
+const compactAt = atom({ plugin: 'context-gauge', key: 'compactAt' } as const, null as number | null)
 
 const WRAP_DELAY_MS = 10_000
 const NOTIFY_AFTER_MS = 20_000
@@ -32,13 +35,11 @@ const WRAP_PROMPT = [
   'Keep it brief.',
 ].join('\n')
 
-// Palette: muted, one accent. Hex strings work on the terminal and the desktop.
+// Muted palette, the same tones the SVG meters use.
 const C = {
-  ok: '#7fb685',
-  warn: '#e0b05c',
-  hot: '#e06c6c',
-  accent: '#9a8cf0',
-  rule: '#5c5f66',
+  ...TONE,
+  accent: '#a39bd6',
+  rule: '#4a4d55',
 }
 
 // ---------- formatting ----------
@@ -59,8 +60,6 @@ const bar = (ratio: number, width: number, on = '━', off = '─') => {
   return [on.repeat(n), off.repeat(width - n)] as const
 }
 
-const blocks = (ratio: number, width: number) => bar(ratio, width, '▰', '▱')
-
 const tone = (ratio: number, warnAt: number, hotAt: number) =>
   ratio >= hotAt ? C.hot : ratio >= warnAt ? C.warn : C.ok
 
@@ -79,12 +78,15 @@ const resetIn = (l: Limit, now: number) => {
   return Number.isNaN(at) ? '' : `↻${dur(at - now)}`
 }
 
-// How close the context is to the point auto-compaction runs. Red from 90%
-// of that point; when auto-compaction is off, measured against the window.
+// How close the context is to the point auto-compaction runs.
 const ctxRatio = (m: Meter) => {
   const limit = m.isAutoCompact && m.threshold ? m.threshold : m.window
   return m.tokens === undefined ? 0 : m.tokens / limit
 }
+
+// Claude's own auto-compaction point, as a percent of the window.
+const autoCompactPercent = (m: Meter | null) =>
+  m?.isAutoCompact && m.threshold ? Math.round((m.threshold / m.window) * 100) : null
 
 const PHASE: Record<Phase, string> = {
   waiting: '◌ waiting',
@@ -92,6 +94,13 @@ const PHASE: Record<Phase, string> = {
   responding: '◑ writing',
   tool: '⚙ tools',
 }
+
+const COMPACT_LABEL: Record<CompactMode, string> = { off: 'Off', remind: 'Remind', auto: 'Auto' }
+const FOOTER_LABEL: Record<FooterMode, string> = { auto: 'Auto', on: 'On', off: 'Off' }
+const nextCompact: Record<CompactMode, CompactMode> = { off: 'remind', remind: 'auto', auto: 'off' }
+const nextFooter: Record<FooterMode, FooterMode> = { auto: 'on', on: 'off', off: 'auto' }
+
+const clampPct = (n: number) => Math.max(30, Math.min(100, Math.round(n)))
 
 // The surface's `Svg`, where it draws one (every surface but the terminal).
 const svgOf = ($: EngineInterface, e: RenderInput) =>
@@ -101,6 +110,7 @@ const svgOf = ($: EngineInterface, e: RenderInput) =>
 
 let ticker: Timer | null = null
 let wrapTimer: Timer | null = null
+let isCompacting = false
 
 async function ensureTicker($: EngineInterface) {
   if (ticker) return
@@ -152,14 +162,50 @@ async function refreshBreakdown($: EngineInterface) {
   }))
 }
 
+// ---------- settings ----------
+
+async function loadSettings($: EngineInterface) {
+  const saved = (await $.store.get('settings')) as Partial<GaugeSettings> | undefined
+  // 0.3 and before kept one wrap-up switch for both windows.
+  const old = (await $.store.get('wrap')) as { isOn?: boolean; atPercent?: number } | undefined
+  const oldFooter = await $.store.get('footer')
+  const s: GaugeSettings = {
+    wrap5h: saved?.wrap5h ?? (old ? { isOn: Boolean(old.isOn), at: old.atPercent ?? 90 } : DEFAULTS.wrap5h),
+    wrap7d: saved?.wrap7d ?? (old ? { isOn: Boolean(old.isOn), at: old.atPercent ?? 95 } : DEFAULTS.wrap7d),
+    compact: saved?.compact ?? DEFAULTS.compact,
+    footer:
+      saved?.footer ?? (oldFooter === 'on' || oldFooter === 'off' || oldFooter === 'auto' ? oldFooter : DEFAULTS.footer),
+  }
+  await update($, settings, () => s)
+}
+
+async function changeSettings($: EngineInterface, fn: (s: GaugeSettings) => GaugeSettings) {
+  const s = await update($, settings, fn)
+  await $.store.set('settings', s)
+  if (!s.wrap5h.isOn && !s.wrap7d.isOn) await cancelWrap($)
+  else await checkWrap($, (await $.session.usage()).rateLimits)
+  await update($, compactAt, () => null)
+  return s
+}
+
+const setRule = (which: 'wrap5h' | 'wrap7d', change: Partial<WrapRule>) => (s: GaugeSettings) => ({
+  ...s,
+  [which]: { ...s[which], ...change, at: clampPct(change.at ?? s[which].at) },
+})
+
+// ---------- wrap-up ----------
+
 async function checkWrap($: EngineInterface, limits: readonly SessionRateLimit[]) {
+  const s = await read($, settings)
   const w = await read($, wrap)
   // Only while a task runs: idle, there is nothing to wrap up, and the one
   // chance per limit window is kept for the next task.
-  if (!w.isOn || w.pending || !(await read($, live))) return
-  const hit = limits.find(
-    l => (l.kind === 'five_hour' || l.kind === 'seven_day') && l.percentUsed >= w.atPercent,
-  )
+  if (w.pending || !(await read($, live))) return
+  const rule = (kind: string) => (kind === 'five_hour' ? s.wrap5h : kind === 'seven_day' ? s.wrap7d : null)
+  const hit = limits.find(l => {
+    const r = rule(l.kind)
+    return r?.isOn && l.percentUsed >= r.at
+  })
   if (!hit) return
   const key = `${hit.kind}@${hit.resetsAt ?? ''}`
   if (w.fired.includes(key)) return
@@ -199,20 +245,40 @@ async function fireWrap($: EngineInterface) {
   }
 }
 
+// ---------- the /compact rule ----------
+
+// Runs when the session is idle: reminds once, or compacts, past the rule.
+async function checkCompact($: EngineInterface) {
+  const s = await read($, settings)
+  const m = await read($, meter)
+  if (s.compact.mode === 'off' || !m || m.percent === undefined || (await read($, live)) || isCompacting) return
+  if (m.percent < s.compact.at) {
+    await update($, compactAt, () => null)
+    return
+  }
+  if ((await read($, compactAt)) !== null) return
+  await update($, compactAt, () => m.percent ?? null)
+  if (s.compact.mode === 'remind') {
+    $.ui.toast(`Context ${m.percent}%: a good point to /compact`, { timeoutMs: 8000 })
+    return
+  }
+  isCompacting = true
+  $.ui.toast(`Context ${m.percent}%: compacting…`, { timeoutMs: 6000 })
+  try {
+    await $.session.compact()
+    await refreshBreakdown($)
+  } catch (error) {
+    $.ui.toast(`Compaction did not run (${String(error).slice(0, 80)})`, { timeoutMs: 8000 })
+  } finally {
+    isCompacting = false
+  }
+}
+
+// ---------- actions ----------
+
 async function stopTurn($: EngineInterface) {
   const l = await read($, live)
   if (l) await $.turn.abort({ turnId: l.turnId })
-}
-
-async function setWrap($: EngineInterface, change: Partial<Wrap>) {
-  const next = await update($, wrap, w => ({ ...w, ...change }))
-  await $.store.set('wrap', { isOn: next.isOn, atPercent: next.atPercent })
-  if (next.isOn) {
-    const u = await $.session.usage()
-    await checkWrap($, u.rateLimits)
-  } else {
-    await cancelWrap($)
-  }
 }
 
 async function toggleCollapsed($: EngineInterface) {
@@ -220,24 +286,29 @@ async function toggleCollapsed($: EngineInterface) {
   await $.store.set('isCollapsed', v)
 }
 
+const openSettings = ($: EngineInterface) => $.ui.open({ id: SETTINGS_PANE, title: 'Gauge settings' })
+
+const COMMANDS = [
+  '/gauge                     live gauge',
+  '/gauge pane                side pane',
+  '/gauge settings            settings',
+  '/gauge wrap 5h 90|on|off   wrap-up at the 5-hour limit',
+  '/gauge wrap 7d 95|on|off   wrap-up at the weekly limit',
+  '/gauge compact 70|remind|auto|off   when to /compact',
+  '/gauge footer auto|on|off  line under each answer',
+].join('\n')
+
 // ---------- hooks ----------
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'gauge',
-      description: 'Context gauge in the transcript; `pane` for the side pane, `footer on|off|auto`, `wrap on|off|<percent>`',
-      argumentHint: '[pane | footer on|off|auto | wrap on|off|<percent>]',
+      description: 'Usage gauge; `pane`, `settings`, `wrap 5h|7d <percent|on|off>`, `compact <percent|remind|auto|off>`',
+      argumentHint: '[pane | settings | wrap 5h|7d … | compact … | footer …]',
     })
-    const saved = (await $.store.get('wrap')) as Partial<Wrap> | undefined
-    await update($, wrap, w => ({
-      ...w,
-      isOn: saved?.isOn ?? w.isOn,
-      atPercent: saved?.atPercent ?? w.atPercent,
-      pending: null,
-    }))
-    const savedFooter = await $.store.get('footer')
-    if (savedFooter === 'on' || savedFooter === 'off' || savedFooter === 'auto') await update($, footer, () => savedFooter)
+    await loadSettings($)
+    await update($, wrap, w => ({ ...w, pending: null }))
     const collapsed = await $.store.get('isCollapsed')
     if (typeof collapsed === 'boolean') await update($, isCollapsed, () => collapsed)
     await refreshBreakdown($)
@@ -246,32 +317,39 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'gauge' }, async ($, e) => {
-    const [sub, arg] = e.args.trim().split(/\s+/)
+    const [sub, a, b] = e.args.trim().toLowerCase().split(/\s+/)
     if (sub === 'wrap') {
-      if (arg === 'on' || arg === 'off') {
-        await setWrap($, { isOn: arg === 'on' })
-        return { text: `Auto wrap-up ${arg}.` }
-      }
-      const pct = Number(arg)
-      if (pct >= 50 && pct <= 100) {
-        await setWrap($, { atPercent: pct })
-        return { text: `Auto wrap-up threshold: ${pct}%.` }
-      }
-      const w = await read($, wrap)
-      return { text: `Auto wrap-up is ${w.isOn ? 'on' : 'off'} at ${w.atPercent}%. Use /gauge wrap on|off|<50-100>.` }
+      const which = a === '5h' ? 'wrap5h' : a === '7d' ? 'wrap7d' : null
+      const word = which ? b : a
+      const pct = Number(word)
+      const change: Partial<WrapRule> | null =
+        word === 'on' ? { isOn: true } : word === 'off' ? { isOn: false } : pct >= 30 && pct <= 100 ? { at: pct, isOn: true } : null
+      if (!change) return { text: `Usage:\n\`\`\`\n${COMMANDS}\n\`\`\`` }
+      const s = await changeSettings($, x =>
+        which ? setRule(which, change)(x) : setRule('wrap7d', change)(setRule('wrap5h', change)(x)),
+      )
+      return { text: `Wrap-up: 5h ${ruleText(s.wrap5h)}, 7d ${ruleText(s.wrap7d)}.` }
+    }
+    if (sub === 'compact') {
+      const pct = Number(a)
+      const s = await changeSettings($, x =>
+        a === 'off' || a === 'remind' || a === 'auto'
+          ? { ...x, compact: { ...x.compact, mode: a } }
+          : pct >= 30 && pct <= 100
+            ? { ...x, compact: { mode: x.compact.mode === 'off' ? 'remind' : x.compact.mode, at: clampPct(pct) } }
+            : x,
+      )
+      return { text: `/compact rule: ${compactText(s)}.` }
     }
     if (sub === 'footer') {
-      if (arg === 'on' || arg === 'off' || arg === 'auto') {
-        await update($, footer, () => arg)
-        await $.store.set('footer', arg)
-        return { text: `Gauge line under each answer: ${arg}.` }
-      }
-      return { text: `Gauge line under each answer: ${await read($, footer)}. Use /gauge footer on|off|auto.` }
+      if (a === 'on' || a === 'off' || a === 'auto') await changeSettings($, x => ({ ...x, footer: a }))
+      return { text: `Line under each answer: ${(await read($, settings)).footer}.` }
     }
     if (sub === 'pane') {
       const opened = await $.ui.open({ id: PANE, title: 'Gauge' })
       return { text: opened.isPlaced ? 'Gauge pane opened.' : `Gauge pane waits: ${opened.reason}` }
     }
+    if (sub === 'settings') return { text: await settingsText($) }
     // A text snapshot for any client that draws the row as text; clients
     // that draw plugin trees replace it with the live gauge.
     return { text: await snapshot($) }
@@ -297,6 +375,7 @@ export const register: Register = on => {
       await refreshBreakdown($)
     }
     await checkWrap($, e.rateLimits)
+    if (e.changed.includes('context')) void checkCompact($)
 
     return next(e)
   })
@@ -384,7 +463,7 @@ export const register: Register = on => {
       }
       await update($, history, h => [...h, row].slice(-20))
       await update($, live, () => null)
-      const mode = await read($, footer)
+      const mode = (await read($, settings)).footer
       const isShown = mode === 'on' || (mode === 'auto' && (await $.session.surfaces()).length === 0)
       if (isShown) {
         const answered = await next(e)
@@ -415,66 +494,64 @@ export const register: Register = on => {
     await read($, tick)
     if (!m && !l) return next(e)
     const now = await $.clock.now()
-    const cols = e.props.bodyColumns
-    const isNarrow = cols < 90
+    const isNarrow = e.props.bodyColumns < 90
     const { Box, Text, Button } = $.ui.resolve(e)
-    const sep = <Text color={C.rule}> │ </Text>
+    const Svg = svgOf($, e)
+    const sep = <Text color={C.rule}>  ·  </Text>
 
     const ctx = m ? ctxRatio(m) : 0
     const ctxColor = tone(ctx, 0.75, 0.9)
-    const [on1, off1] = bar(ctx, isNarrow ? 8 : 16)
+    const [on1, off1] = bar(ctx, isNarrow ? 8 : 14)
     const limits = (m?.limits ?? []).filter(x => !isNarrow || x.kind === 'five_hour')
-
-    const Svg = svgOf($, e)
     const drawn = m && readings(m, ctx, now)
-    const meterRow = m && drawn && Svg ? (
-      <Svg source={strip(drawn, m.usd)} alt={alt(drawn, m.usd)} />
-    ) : m && (
-      <Box flexDirection="row" flexWrap="wrap">
-        <Text color={C.accent}>◆ </Text>
-        <Text dimColor>ctx </Text>
-        <Text color={ctxColor}>{on1}</Text>
-        <Text color={C.rule}>{off1}</Text>
-        <Text color={ctxColor} bold>
-          {' '}
-          {m.percent ?? 0}%
-        </Text>
-        {!isNarrow && m.tokens !== undefined && (
-          <Text dimColor>
-            {' '}
-            {k(m.tokens)}/{k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}
-          </Text>
-        )}
-        {!isNarrow && m.delta ? (
-          <Text dimColor>
-            {' '}
-            {m.delta > 0 ? '+' : ''}
-            {k(m.delta)}
-          </Text>
-        ) : null}
-        {ctx >= 0.9 && <Text color={C.hot}> ⚠ auto-compact soon</Text>}
-        {limits.map(x => {
-          const c = tone(x.percent / 100, 0.7, 0.9)
-          const [a, b] = blocks(x.percent / 100, 5)
-          return (
-            <Box flexDirection="row">
-              {sep}
-              <Text dimColor>{limitLabel(x.kind)} </Text>
-              <Text color={c}>{a}</Text>
-              <Text color={C.rule}>{b}</Text>
-              <Text color={c}> {x.percent}%</Text>
-              <Text dimColor> {resetIn(x, now)}</Text>
-            </Box>
-          )
-        })}
-        {!isNarrow && m.usd !== undefined && (
-          <Box flexDirection="row">
-            {sep}
-            <Text dimColor>${m.usd.toFixed(2)}</Text>
+
+    const gear = <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
+
+    const meterRow =
+      m && drawn && Svg ? (
+        <Box flexDirection="row" alignItems="center" gap={2}>
+          <Svg source={strip(drawn, m.usd)} alt={alt(drawn, m.usd)} />
+          {gear}
+        </Box>
+      ) : (
+        m && (
+          <Box flexDirection="row" flexWrap="wrap">
+            <Text dimColor>ctx </Text>
+            <Text color={ctxColor}>{on1}</Text>
+            <Text color={C.rule}>{off1}</Text>
+            <Text color={ctx >= 0.9 ? C.hot : undefined}> {m.percent ?? 0}%</Text>
+            {!isNarrow && m.tokens !== undefined && (
+              <Text dimColor>
+                {' '}
+                {k(m.tokens)}/{k(m.isAutoCompact && m.threshold ? m.threshold : m.window)}
+              </Text>
+            )}
+            {ctx >= 0.9 && <Text color={C.hot}> compacts soon</Text>}
+            {limits.map(x => {
+              const c = tone(x.percent / 100, 0.7, 0.9)
+              const [a, b] = bar(x.percent / 100, 6)
+              return (
+                <Box flexDirection="row">
+                  {sep}
+                  <Text dimColor>{limitLabel(x.kind)} </Text>
+                  <Text color={c}>{a}</Text>
+                  <Text color={C.rule}>{b}</Text>
+                  <Text color={x.percent >= 90 ? C.hot : undefined}> {x.percent}%</Text>
+                  <Text dimColor> {resetIn(x, now)}</Text>
+                </Box>
+              )
+            })}
+            {!isNarrow && m.usd !== undefined && (
+              <Box flexDirection="row">
+                {sep}
+                <Text dimColor>${m.usd.toFixed(2)}</Text>
+              </Box>
+            )}
+            <Text> </Text>
+            {gear}
           </Box>
-        )}
-      </Box>
-    )
+        )
+      )
 
     const running = l && l.tools.find(t => t.ms === null)
     const tps = l && l.genMs > 500 ? Math.round(l.outTokens / (l.genMs / 1000)) : null
@@ -486,25 +563,24 @@ export const register: Register = on => {
         <Text color={C.accent}>{PHASE[l.phase]} </Text>
         <Text>{dur(phaseNow)}</Text>
         {sep}
-        <Text dimColor>turn </Text>
-        <Text>{dur(now - l.startedAt)}</Text>
+        <Text dimColor>turn {dur(now - l.startedAt)}</Text>
         {thinkTotal > 0 && <Text dimColor> · think {dur(thinkTotal)}</Text>}
         {tps !== null && <Text dimColor> · {tps} tok/s</Text>}
-        {running && <Text dimColor> · ⚙ {running.name} {dur(now - running.startedAt)}</Text>}
-        <Text> </Text>
+        {running && <Text dimColor> · {running.name} {dur(now - running.startedAt)}</Text>}
+        <Text>  </Text>
         <Button key="stop" label="■ Stop" hotkey="s" onPress={() => stopTurn($)} />
         <Text> </Text>
-        <Button key="pane" label="▸ Panel" dimColor onPress={() => $.ui.open({ id: PANE, title: 'Gauge' })} />
+        <Button key="pane" label="Panel" dimColor onPress={() => $.ui.open({ id: PANE, title: 'Gauge' })} />
       </Box>
     )
 
     const wrapRow = w.pending && (
       <Box flexDirection="row" flexWrap="wrap">
-        <Text color={C.hot}>⚠ {w.pending.label} </Text>
-        <Text>wrap-up prompt in {dur(w.pending.deadline - now)} </Text>
+        <Text color={C.hot}>{w.pending.label} </Text>
+        <Text dimColor>wrap-up prompt in {dur(w.pending.deadline - now)} </Text>
         <Button key="wrap-cancel" label="Cancel" hotkey="c" onPress={() => cancelWrap($)} />
         <Text> </Text>
-        <Button key="wrap-now" label="Send now" variant="primary" onPress={() => fireWrap($)} />
+        <Button key="wrap-now" label="Send now" dimColor onPress={() => fireWrap($)} />
       </Box>
     )
 
@@ -517,26 +593,35 @@ export const register: Register = on => {
     )
   })
 
-  // ---------- side pane, and the /gauge row where no pane is placed ----------
+  // ---------- panes, and the /gauge rows in the transcript ----------
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawGauge($, e, e.props.bodyColumns))
+  on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, ($, e) => drawSettings($, e))
 
-  // The /gauge row in the transcript is the live gauge itself, on every
-  // client: the mobile app draws no band and places no pane.
-  on('ui.render', { component: 'CommandOutput', props: { command: 'gauge' } }, ($, e, next) =>
-    e.props.args.trim() !== '' ? next(e) : drawGauge($, e, e.viewport?.columns ?? 60),
-  )
+  // The /gauge rows draw live in the transcript on every client that draws
+  // plugin trees: the mobile app draws no band and places no pane.
+  on('ui.render', { component: 'CommandOutput', props: { command: 'gauge' } }, ($, e, next) => {
+    const sub = e.props.args.trim().toLowerCase()
+    if (sub === '') return drawGauge($, e, e.viewport?.columns ?? 60)
+    if (sub === 'settings') return drawSettings($, e)
+    return next(e)
+  })
 }
 
+// ---------- text views (clients that draw text, and the cloud) ----------
+
 const DOT = (ratio: number, warnAt: number, hotAt: number) => (ratio >= hotAt ? '🔴' : ratio >= warnAt ? '🟡' : '🟢')
+const ruleText = (r: WrapRule) => (r.isOn ? `at ${r.at}%` : 'off')
+const compactText = (s: GaugeSettings) => (s.compact.mode === 'off' ? 'off' : `${s.compact.mode} at ${s.compact.at}%`)
 
 async function footerLine($: EngineInterface, row: TurnRow) {
   const m = await read($, meter)
+  const s = await read($, settings)
   const now = await $.clock.now()
   const parts: string[] = []
   if (m) {
     const r = ctxRatio(m)
-    parts.push(`${DOT(r, 0.75, 0.9)} ctx ${m.percent ?? 0}%` + (r >= 0.9 ? ' auto-compact soon' : ''))
+    parts.push(`${DOT(r, 0.75, 0.9)} ctx ${m.percent ?? 0}%` + (r >= 0.9 ? ' compacts soon' : ''))
     for (const x of m.limits) {
       parts.push(`${DOT(x.percent / 100, 0.7, 0.9)} ${limitLabel(x.kind)} ${x.percent}% ${resetIn(x, now)}`.trim())
     }
@@ -545,13 +630,13 @@ async function footerLine($: EngineInterface, row: TurnRow) {
   parts.push(`⏱ ${dur(row.ms)}` + (row.thinkMs ? ` (think ${dur(row.thinkMs)})` : ''))
   if (row.tools) parts.push(`${row.tools} tools`)
   if (row.tps) parts.push(`${row.tps} tok/s`)
+  if (m?.percent !== undefined && s.compact.mode === 'remind' && m.percent >= s.compact.at) parts.push('💡 /compact')
   return parts.join('  ·  ')
 }
 
 async function snapshot($: EngineInterface) {
   const m = await read($, meter)
   const l = await read($, live)
-  const w = await read($, wrap)
   const now = await $.clock.now()
   const rows: string[] = []
   const line = (dot: string, label: string, ratio: number, value: string, note: string) => {
@@ -561,7 +646,7 @@ async function snapshot($: EngineInterface) {
   if (m) {
     const r = ctxRatio(m)
     const limit = m.isAutoCompact && m.threshold ? m.threshold : m.window
-    line(DOT(r, 0.75, 0.9), 'CONTEXT', r, `${m.percent ?? 0}%`, r >= 0.9 ? 'auto-compact soon' : `${k(m.tokens ?? 0)} / ${k(limit)}`)
+    line(DOT(r, 0.75, 0.9), 'CONTEXT', r, `${m.percent ?? 0}%`, r >= 0.9 ? 'compacts soon' : `${k(m.tokens ?? 0)} / ${k(limit)}`)
     for (const kind of ['five_hour', 'seven_day']) {
       const x = m.limits.find(y => y.kind === kind)
       const label = kind === 'five_hour' ? '5 HOUR' : '7 DAY'
@@ -572,32 +657,130 @@ async function snapshot($: EngineInterface) {
   }
   if (l) rows.push(`${PHASE[l.phase]} · turn ${dur(now - l.startedAt)} · ${l.tools.length} tools`)
   const surfaces = await $.session.surfaces()
-  const foot = `auto wrap-up ${w.isOn ? `on at ${w.atPercent}%` : 'off'} · clients: ${surfaces.join(', ') || 'none'}`
-  return '```\n' + rows.join('\n') + '\n```\n' + foot
+  return '```\n' + rows.join('\n') + '\n```\n' + `settings: /gauge settings · clients: ${surfaces.join(', ') || 'none'}`
+}
+
+async function settingsText($: EngineInterface) {
+  const s = await read($, settings)
+  const auto = autoCompactPercent(await read($, meter))
+  return [
+    '```',
+    'AUTO WRAP-UP',
+    `  5-hour limit   ${ruleText(s.wrap5h)}`,
+    `  weekly limit   ${ruleText(s.wrap7d)}`,
+    'CONTEXT',
+    `  /compact       ${compactText(s)}` + (auto ? `   (Claude auto-compacts at ${auto}%)` : ''),
+    `LINE UNDER ANSWERS  ${s.footer}`,
+    '```',
+    '```',
+    COMMANDS,
+    '```',
+  ].join('\n')
+}
+
+// ---------- tree views ----------
+
+async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const s = await read($, settings)
+  const auto = autoCompactPercent(await read($, meter))
+
+  const head = (title: string, note: string) => (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color={C.accent} bold>
+        {title}
+      </Text>
+      <Text dimColor>{note}</Text>
+    </Box>
+  )
+
+  const stepper = (id: string, value: number, onStep: (d: number) => void, isOn: boolean) => (
+    <Box flexDirection="row">
+      <Button key={`${id}-down`} label="−" plain dimColor onPress={() => onStep(-5)} />
+      <Text color={isOn ? undefined : C.rule}> {String(value).padStart(3)}% </Text>
+      <Button key={`${id}-up`} label="+" plain dimColor onPress={() => onStep(5)} />
+    </Box>
+  )
+
+  const ruleRow = (which: 'wrap5h' | 'wrap7d', label: string) => {
+    const r = s[which]
+    return (
+      <Box flexDirection="row" gap={1}>
+        <Text>{label.padEnd(14)}</Text>
+        <Button
+          key={`${which}-toggle`}
+          label={r.isOn ? 'On ' : 'Off'}
+          dimColor={!r.isOn}
+          onPress={() => changeSettings($, setRule(which, { isOn: !r.isOn }))}
+        />
+        <Text dimColor>at</Text>
+        {stepper(which, r.at, d => void changeSettings($, setRule(which, { at: r.at + d })), r.isOn)}
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column">
+      {head('Auto wrap-up', 'A note into the running task: finish the step, save, hand off.')}
+      {ruleRow('wrap5h', '5-hour limit')}
+      {ruleRow('wrap7d', 'Weekly limit')}
+      {head('Context', `When to /compact${auto ? ` (Claude auto-compacts at ${auto}%)` : ''}. Auto runs only while idle.`)}
+      <Box flexDirection="row" gap={1}>
+        <Text>{'/compact'.padEnd(14)}</Text>
+        <Button
+          key="compact-mode"
+          label={COMPACT_LABEL[s.compact.mode].padEnd(6)}
+          dimColor={s.compact.mode === 'off'}
+          onPress={() => changeSettings($, x => ({ ...x, compact: { ...x.compact, mode: nextCompact[x.compact.mode] } }))}
+        />
+        <Text dimColor>at</Text>
+        {stepper(
+          'compact',
+          s.compact.at,
+          d => void changeSettings($, x => ({ ...x, compact: { ...x.compact, at: clampPct(x.compact.at + d) } })),
+          s.compact.mode !== 'off',
+        )}
+      </Box>
+      {head('Display', 'A line under each answer: Auto shows it where no band is drawn.')}
+      <Box flexDirection="row" gap={1}>
+        <Text>{'Answer line'.padEnd(14)}</Text>
+        <Button
+          key="footer-mode"
+          label={FOOTER_LABEL[s.footer]}
+          dimColor={s.footer === 'off'}
+          onPress={() => changeSettings($, x => ({ ...x, footer: nextFooter[x.footer] }))}
+        />
+      </Box>
+    </Box>
+  )
 }
 
 async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>, columns: number) {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const m = await read($, meter)
-    const l = await read($, live)
-    const hist = await read($, history)
-    const w = await read($, wrap)
-    const collapsed = await read($, isCollapsed)
-    await read($, tick)
-    const now = await $.clock.now()
-    const width = Math.max(12, columns - 2)
-    const barW = Math.max(6, Math.min(30, width - 16))
-    const ctx = m ? ctxRatio(m) : 0
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const Svg = svgOf($, e)
+  const m = await read($, meter)
+  const l = await read($, live)
+  const hist = await read($, history)
+  const w = await read($, wrap)
+  const s = await read($, settings)
+  const collapsed = await read($, isCollapsed)
+  await read($, tick)
+  const now = await $.clock.now()
+  const width = Math.max(12, columns - 2)
+  const barW = Math.max(6, Math.min(24, width - 18))
+  const ctx = m ? ctxRatio(m) : 0
+  const drawn = m && readings(m, ctx, now)
 
-    const head = (title: string) => (
-      <Box marginTop={1}>
-        <Text color={C.accent} bold>
-          {title.toUpperCase()}
-        </Text>
-      </Box>
-    )
+  const head = (title: string) => (
+    <Box marginTop={1}>
+      <Text color={C.accent} bold>
+        {title.toUpperCase()}
+      </Text>
+    </Box>
+  )
 
-    const toggle = (
+  const header = (
+    <Box flexDirection="row" justifyContent="space-between" width={width}>
       <Button
         key="fold"
         label={collapsed ? '◂ expand' : '▸ fold'}
@@ -606,187 +789,153 @@ async function drawGauge($: EngineInterface, e: RenderInput<'Pane' | 'CommandOut
         hotkey="f"
         onPress={() => toggleCollapsed($)}
       />
-    )
+      <Button key="pane-settings" label="⚙ settings" plain dimColor onPress={() => openSettings($)} />
+    </Box>
+  )
 
-    if (collapsed) {
-      return (
-        <Box flexDirection="column">
-          {toggle}
-          <Text color={tone(ctx, 0.75, 0.9)}>ctx {m?.percent ?? 0}%</Text>
-          {(m?.limits ?? []).map(x => (
-            <Text color={tone(x.percent / 100, 0.7, 0.9)}>
-              {limitLabel(x.kind)} {x.percent}%
-            </Text>
-          ))}
-          {l && <Text color={C.accent}>{PHASE[l.phase]}</Text>}
-        </Box>
-      )
-    }
-
-    const Svg = svgOf($, e)
-    const drawn = m && readings(m, ctx, now)
-    const hero =
-      m && drawn && Svg ? (
-        <Svg
-          source={rings(drawn, m.usd, l ? `${PHASE[l.phase]} ${dur(now - l.phaseSince)}` : null)}
-          alt={alt(drawn, m.usd)}
-        />
-      ) : null
-
-    const [c1, c2] = bar(ctx, barW)
-    const ctxSection = m && hero ? (
-      <Box flexDirection="column">
-        {head('Context')}
-        <Text dimColor>
-          {k(m.tokens ?? 0)} of {k(m.window)}
-          {m.isAutoCompact && m.threshold ? ` · auto-compact at ${k(m.threshold)}` : ' · auto-compact off'}
-        </Text>
-        {m.categories.slice(0, 8).map(c => (
-          <Box flexDirection="row" justifyContent="space-between" width={width}>
-            <Text dimColor wrap="truncate">
-              {c.name}
-            </Text>
-            <Text dimColor>{k(c.tokens)}</Text>
-          </Box>
-        ))}
-      </Box>
-    ) : m && (
-      <Box flexDirection="column">
-        {head('Context')}
-        <Box flexDirection="row">
-          <Text color={tone(ctx, 0.75, 0.9)}>{c1}</Text>
-          <Text color={C.rule}>{c2}</Text>
-          <Text bold color={tone(ctx, 0.75, 0.9)}>
-            {' '}
-            {m.percent ?? 0}%
-          </Text>
-        </Box>
-        <Text dimColor>
-          {k(m.tokens ?? 0)} of {k(m.window)}
-          {m.isAutoCompact && m.threshold ? ` · auto-compact at ${k(m.threshold)}` : ' · auto-compact off'}
-        </Text>
-        {m.categories.slice(0, 8).map(c => (
-          <Box flexDirection="row" justifyContent="space-between" width={width}>
-            <Text dimColor wrap="truncate">
-              {c.name}
-            </Text>
-            <Text dimColor>{k(c.tokens)}</Text>
-          </Box>
-        ))}
-      </Box>
-    )
-
-    const limitSection = !hero && m && m.limits.length > 0 && (
-      <Box flexDirection="column">
-        {head('Usage limits')}
-        {m.limits.map(x => {
-          const [a, b] = blocks(x.percent / 100, Math.min(20, barW))
-          const c = tone(x.percent / 100, 0.7, 0.9)
-          return (
-            <Box flexDirection="column">
-              <Box flexDirection="row">
-                <Text>{limitLabel(x.kind).padEnd(6)}</Text>
-                <Text color={c}>{a}</Text>
-                <Text color={C.rule}>{b}</Text>
-                <Text color={c}> {x.percent}%</Text>
-              </Box>
-              <Text dimColor>      resets in {resetIn(x, now).slice(1) || '—'}</Text>
-            </Box>
-          )
-        })}
-        {m.usd !== undefined && <Text dimColor>session cost ${m.usd.toFixed(2)}</Text>}
-      </Box>
-    )
-
-    const turnSection = l && (
-      <Box flexDirection="column">
-        {head('This turn')}
-        <Box flexDirection="row">
-          <Text color={C.accent}>{PHASE[l.phase]} </Text>
-          <Text>{dur(now - l.phaseSince)}</Text>
-          <Text> </Text>
-          <Button key="pane-stop" label="■ Stop" hotkey="s" onPress={() => stopTurn($)} />
-        </Box>
-        <Text dimColor>
-          total {dur(now - l.startedAt)} · think {dur(l.thinkMs + (l.phase === 'thinking' ? now - l.phaseSince : 0))} · write{' '}
-          {dur(l.respondMs + (l.phase === 'responding' ? now - l.phaseSince : 0))} · tools{' '}
-          {dur(l.toolMs + (l.phase === 'tool' ? now - l.phaseSince : 0))}
-        </Text>
-        <Text dimColor>
-          {k(l.outTokens)} out{l.genMs > 500 ? ` · ${Math.round(l.outTokens / (l.genMs / 1000))} tok/s` : ''}
-        </Text>
-        {head('Tools')}
-        {l.tools.length === 0 && <Text dimColor>none yet</Text>}
-        {l.tools.slice(-10).map(t => {
-          const ms = t.ms ?? now - t.startedAt
-          const longest = Math.max(1000, ...l.tools.map(x => x.ms ?? now - x.startedAt))
-          const [a] = bar(ms / longest, Math.max(4, Math.min(12, width - 26)), '▬', ' ')
-          return (
-            <Box flexDirection="row">
-              <Text color={t.ms === null ? C.accent : t.isError ? C.hot : C.ok}>
-                {t.ms === null ? '◌ ' : t.isError ? '✕ ' : '✓ '}
-              </Text>
-              <Text wrap="truncate">{t.name.replace(/^mcp__/, '').slice(0, 14).padEnd(14)} </Text>
-              <Text color={C.rule}>{a}</Text>
-              <Text dimColor> {dur(ms)}</Text>
-            </Box>
-          )
-        })}
-      </Box>
-    )
-
-    const recent = hist.slice(-10)
-    const historySection = recent.length > 0 && (
-      <Box flexDirection="column">
-        {head('Recent turns')}
-        <Box flexDirection="row">
-          <Text dimColor>time  </Text>
-          <Text color={C.accent}>{spark(recent.map(r => r.ms))}</Text>
-          <Text dimColor> last {dur(recent[recent.length - 1]!.ms)}</Text>
-        </Box>
-        <Box flexDirection="row">
-          <Text dimColor>think </Text>
-          <Text color={C.accent}>{spark(recent.map(r => r.thinkMs))}</Text>
-        </Box>
-        <Box flexDirection="row">
-          <Text dimColor>tok/s </Text>
-          <Text color={C.accent}>{spark(recent.map(r => r.tps ?? 0))}</Text>
-          <Text dimColor> last {recent[recent.length - 1]!.tps ?? '—'}</Text>
-        </Box>
-      </Box>
-    )
-
-    const wrapSection = (
-      <Box flexDirection="column">
-        {head('Auto wrap-up')}
-        <Box flexDirection="row">
-          <Text dimColor>{w.isOn ? `on · at ${w.atPercent}% of 5h/7d ` : 'off '}</Text>
-          <Button
-            key="wrap-toggle"
-            label={w.isOn ? 'Turn off' : 'Turn on'}
-            dimColor
-            hotkey="w"
-            onPress={() => setWrap($, { isOn: !w.isOn })}
-          />
-        </Box>
-        {w.pending && (
-          <Box flexDirection="row">
-            <Text color={C.hot}>sending in {dur(w.pending.deadline - now)} </Text>
-            <Button key="pane-wrap-cancel" label="Cancel" onPress={() => cancelWrap($)} />
-          </Box>
-        )}
-      </Box>
-    )
-
+  if (collapsed) {
     return (
       <Box flexDirection="column">
-        {toggle}
-        {hero}
-        {ctxSection}
-        {limitSection}
-        {turnSection}
-        {historySection}
-        {wrapSection}
+        {header}
+        <Text color={tone(ctx, 0.75, 0.9)}>ctx {m?.percent ?? 0}%</Text>
+        {(m?.limits ?? []).map(x => (
+          <Text color={tone(x.percent / 100, 0.7, 0.9)}>
+            {limitLabel(x.kind)} {x.percent}%
+          </Text>
+        ))}
+        {l && <Text color={C.accent}>{PHASE[l.phase]}</Text>}
       </Box>
     )
+  }
+
+  // The meters: small SVG bars where the surface draws them, text elsewhere.
+  const meters =
+    m && drawn && Svg ? (
+      <Box marginTop={1}>
+        <Svg source={stack(drawn, width * 7)} alt={alt(drawn, m.usd)} />
+      </Box>
+    ) : (
+      m && (
+        <Box flexDirection="column">
+          {head('Usage')}
+          {[
+            { label: 'ctx', ratio: ctx, value: `${m.percent ?? 0}%`, note: `${k(m.tokens ?? 0)}/${k(m.window)}`, warn: 0.75 },
+            ...m.limits.map(x => ({
+              label: limitLabel(x.kind),
+              ratio: x.percent / 100,
+              value: `${x.percent}%`,
+              note: resetIn(x, now),
+              warn: 0.7,
+            })),
+          ].map(r => {
+            const [a, b] = bar(r.ratio, barW)
+            return (
+              <Box flexDirection="row">
+                <Text dimColor>{r.label.padEnd(4)}</Text>
+                <Text color={tone(r.ratio, r.warn, 0.9)}>{a}</Text>
+                <Text color={C.rule}>{b}</Text>
+                <Text color={r.ratio >= 0.9 ? C.hot : undefined}> {r.value.padStart(4)}</Text>
+                <Text dimColor> {r.note}</Text>
+              </Box>
+            )
+          })}
+        </Box>
+      )
+    )
+
+  const summary = m && (
+    <Box flexDirection="column" marginTop={1}>
+      <Text dimColor>
+        {m.usd !== undefined ? `$${m.usd.toFixed(2)} this session` : ''}
+        {m.isAutoCompact && m.threshold ? ` · auto-compact at ${k(m.threshold)}` : ''}
+      </Text>
+      <Text dimColor>
+        wrap-up 5h {ruleText(s.wrap5h)} · 7d {ruleText(s.wrap7d)} · /compact {compactText(s)}
+      </Text>
+    </Box>
+  )
+
+  const turnSection = l && (
+    <Box flexDirection="column">
+      {head('This turn')}
+      <Box flexDirection="row">
+        <Text color={C.accent}>{PHASE[l.phase]} </Text>
+        <Text>{dur(now - l.phaseSince)}</Text>
+        <Text>  </Text>
+        <Button key="pane-stop" label="■ Stop" hotkey="s" onPress={() => stopTurn($)} />
+      </Box>
+      <Text dimColor>
+        total {dur(now - l.startedAt)} · think {dur(l.thinkMs + (l.phase === 'thinking' ? now - l.phaseSince : 0))} · write{' '}
+        {dur(l.respondMs + (l.phase === 'responding' ? now - l.phaseSince : 0))} · tools{' '}
+        {dur(l.toolMs + (l.phase === 'tool' ? now - l.phaseSince : 0))}
+      </Text>
+      <Text dimColor>
+        {k(l.outTokens)} out{l.genMs > 500 ? ` · ${Math.round(l.outTokens / (l.genMs / 1000))} tok/s` : ''}
+      </Text>
+      {l.tools.slice(-8).map(t => {
+        const ms = t.ms ?? now - t.startedAt
+        return (
+          <Box flexDirection="row">
+            <Text color={t.ms === null ? C.accent : t.isError ? C.hot : C.ok}>
+              {t.ms === null ? '◌ ' : t.isError ? '✕ ' : '✓ '}
+            </Text>
+            <Text dimColor wrap="truncate">
+              {t.name.replace(/^mcp__/, '').slice(0, 18).padEnd(18)}
+            </Text>
+            <Text dimColor> {dur(ms)}</Text>
+          </Box>
+        )
+      })}
+    </Box>
+  )
+
+  const recent = hist.slice(-12)
+  const historySection = recent.length > 1 && (
+    <Box flexDirection="column">
+      {head('Recent turns')}
+      <Box flexDirection="row">
+        <Text dimColor>{'time'.padEnd(6)}</Text>
+        <Text color={C.accent}>{spark(recent.map(r => r.ms))}</Text>
+        <Text dimColor> last {dur(recent[recent.length - 1]!.ms)}</Text>
+      </Box>
+      <Box flexDirection="row">
+        <Text dimColor>{'tok/s'.padEnd(6)}</Text>
+        <Text color={C.accent}>{spark(recent.map(r => r.tps ?? 0))}</Text>
+        <Text dimColor> last {recent[recent.length - 1]!.tps ?? '—'}</Text>
+      </Box>
+    </Box>
+  )
+
+  const breakdown = m && m.categories.length > 0 && (
+    <Box flexDirection="column">
+      {head('Context breakdown')}
+      {m.categories.slice(0, 8).map(c => (
+        <Box flexDirection="row" justifyContent="space-between" width={width}>
+          <Text dimColor wrap="truncate">
+            {c.name}
+          </Text>
+          <Text dimColor>{k(c.tokens)}</Text>
+        </Box>
+      ))}
+    </Box>
+  )
+
+  const pendingRow = w.pending && (
+    <Box flexDirection="row" marginTop={1}>
+      <Text color={C.hot}>wrap-up in {dur(w.pending.deadline - now)} </Text>
+      <Button key="pane-wrap-cancel" label="Cancel" onPress={() => cancelWrap($)} />
+    </Box>
+  )
+
+  return (
+    <Box flexDirection="column">
+      {header}
+      {meters}
+      {summary}
+      {pendingRow}
+      {turnSection}
+      {historySection}
+      {breakdown}
+    </Box>
+  )
 }
