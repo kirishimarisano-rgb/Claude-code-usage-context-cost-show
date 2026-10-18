@@ -355,10 +355,9 @@ test('the slider switches model and effort, and keeps Fable locked without Max',
   on('config.list', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
 
-  // The band keeps a small track and the name; the name opens the picker inside the band.
+  // The band keeps one button, the positions as dots and the name; it opens the picker inside the band.
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect(await band.find({ key: 'model-chip' })).toBeDefined()
-  expect((await band.find({ key: 'model-track' }))?.props.width).toBe(23)
+  expect((await band.find({ key: 'model-chip' }))?.text).toMatch(/^○○○○○ /)
   expect(await band.find({ key: 'pick-0' })).toBeUndefined()
   await band.press({ key: 'model-chip' })
   expect(await band.find({ key: 'pick-0' })).toBeDefined()
@@ -372,8 +371,10 @@ test('the slider switches model and effort, and keeps Fable locked without Max',
     expect.arrayContaining(['Sonnet low', 'Sonnet high', 'Opus med', 'Opus xhigh', '⊘ Fable high', '⚡ Fast']),
   )
   await picker.unmount()
+  // The terminal draws no picture: a button per position.
   const term = await $.ui.mount({ ...PICKER, surface: 'terminal' })
-  expect(String((await term.find({ type: 'Client' }))?.props.module)).toMatch(/slider\.tsx$/)
+  expect(await term.find({ type: 'Svg' })).toBeUndefined()
+  expect(await term.find({ key: 'pick-2' })).toBeDefined()
   await term.unmount()
 
   await run($, 'model 3')
@@ -442,24 +443,6 @@ test('each prompt becomes a timeline line, colored by how its turn ended', async
   const ui = await $.ui.mount({ ...pane, surface: 'desktop' })
   expect(await ui.find({ key: 'tl-turn-a' })).toBeDefined()
   expect((await ui.find({ key: 'tl-turn-b' }))?.text).toBe('run the tests')
-  await ui.unmount()
-})
-
-test('dragging the band track across stops switches on release', async ($, on) => {
-  const clock = engine(on)
-  const ran = commands(on)
-  on('session.surfaces', () => ({ value: [] }))
-  await measured($, measure(60_000, 10))
-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  await ui.resize({ columns: 23, rows: 1, in: 'model-track' })
-  // The band's capsule: a cap cell, then a stop every five cells. Press on 1,
-  // drag to 4, let go.
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'model-track' })
-  await ui.pointer({ type: 'move', x: 9, y: 0, button: 'left', in: 'model-track' })
-  await ui.pointer({ type: 'move', x: 16, y: 0, button: 'left', in: 'model-track' })
-  await ui.pointer({ type: 'up', x: 16, y: 0, button: 'left', in: 'model-track' })
-  await clock.advance(1)
-  expect(ran).toEqual(['/model opus', '/effort xhigh'])
   await ui.unmount()
 })
 
@@ -604,21 +587,21 @@ test('the status panel checks status.claude.com only on Refresh', async ($, on) 
   await band.unmount()
 })
 
-test('the slider and the model name show and hide together', async ($, on) => {
+test('the model control shows and hides as one', async ($, on) => {
   engine(on)
   on('session.surfaces', () => ({ value: [] }))
   await measured($, measure(60_000, 10))
   const band = async () => {
     const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    const shown = [await ui.find({ key: 'model-track' }), await ui.find({ key: 'model-chip' })].map(Boolean)
+    const shown = [await ui.find({ key: 'model-chip' })].map(Boolean)
     await ui.unmount()
     return shown
   }
-  expect(await band()).toEqual([true, true])
-  expect((await run($, 'slider off')).text).toMatch(/slider and name\) off/)
-  expect(await band()).toEqual([false, false])
+  expect(await band()).toEqual([true])
+  expect((await run($, 'slider off')).text).toMatch(/off/)
+  expect(await band()).toEqual([false])
   await run($, 'models on')
-  expect(await band()).toEqual([true, true])
+  expect(await band()).toEqual([true])
 })
 
 test('size L keeps its scale in a medium band by dropping detail first', async ($, on) => {
@@ -635,7 +618,7 @@ test('size L keeps its scale in a medium band by dropping detail first', async (
   const wide = await source(260)
   expect(wide).toMatch(/scale\(1\.36\)/)
   expect(wide).toMatch(/95k \/ 200k/)
-  for (const columns of [160, 140]) {
+  for (const columns of [140, 120]) {
     const svg = await source(columns)
     expect(svg).toMatch(/scale\(1\.36\)/)
     expect(svg).not.toMatch(/95k \/ 200k/)

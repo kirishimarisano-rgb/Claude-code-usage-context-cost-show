@@ -700,9 +700,9 @@ const COMMANDS = [
   '/gauge footer auto|on|off  line under each answer',
   '/gauge look classic|minimal|terminal  display style',
   '/gauge size s|m|l          text size',
-  '/gauge model 1-5           switch to a slider position',
+  '/gauge model 1-5           switch to a position',
   '/gauge model               the model picker',
-  '/gauge models on|off       show or hide the model control (slider and name)',
+  '/gauge models on|off       show or hide the model control',
   '/gauge max on|off          you have a Max plan (unlocks Fable)',
   '/gauge fast                toggle fast mode',
   '/gauge style [name]        next output style, or one by name',
@@ -714,12 +714,6 @@ const COMMANDS = [
   '/gauge usage               ask Anthropic for the 5-hour and weekly usage now',
   '/gauge help                this list',
 ].join('\n')
-
-async function onSlide($: EngineInterface, e: { data: unknown }) {
-  const slot = (e.data as { slot?: unknown } | null)?.slot
-  if (typeof slot === 'number') later($, () => applySlot($, slot))
-  return {}
-}
 
 // ---------- hooks ----------
 
@@ -755,10 +749,6 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The model sliders' Clients (the band's track, the picker's) post the
-  // position the person let go on.
-  on('ui.message', { element: 'model-slider' }, onSlide)
-  on('ui.message', { element: 'model-track' }, onSlide)
 
 
   on('command.run', { command: 'gauge' }, async ($, e) => {
@@ -818,7 +808,7 @@ export const register: Register = on => {
     }
     if ((sub === 'models' || sub === 'slider') && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, models: { ...x.models, isShown: a === 'on' } }))
-      return { text: `Model control (slider and name) ${a}.` }
+      return { text: `Model control ${a}.` }
     }
     if (sub === 'max' && (a === 'on' || a === 'off')) {
       await changeSettings($, x => ({ ...x, models: { ...x.models, hasMax: a === 'on' } }))
@@ -1121,7 +1111,7 @@ export const register: Register = on => {
     // What the SVG line may take: the band's cells less the controls beside
     // it, at a conservative 8px a cell (a desktop UI font's cell is ~7-8px).
     const controlCells =
-      (chip ? 24 + 2 + (await chipNameLength($)) + 2 : 0) +
+      (chip ? (await chipNameLength($)) + 4 : 0) +
       8
     // Buttons take a little more than their cells on desktop (padding), so
     // leave room to spare; the meters shrink and clip, the controls never do.
@@ -1469,7 +1459,7 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   const models = (
     <Box flexDirection="column">
       {head('Model picker', 'A chip above the prompt opens it. Click a part of a position to change it.')}
-      {row('Model control', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))), <Text dimColor>the slider and the model name, together</Text>)}
+      {row('Model control', toggle('models-shown', s.models.isShown, () => changeSettings($, x => ({ ...x, models: { ...x.models, isShown: !x.models.isShown } }))), <Text dimColor>the positions and the model name, in the band</Text>)}
       {s.models.slots.map((slot, i) =>
         row(
           `Position ${i + 1}`,
@@ -1549,18 +1539,8 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   )
 }
 
-// The slider's surface module, on the surfaces that run one. `Client` comes
-// straight off `$.ui.resolve`, so the directory reads the module path.
-type SliderProps = { labels: string[]; locked: boolean[]; active: number | null; accent: string; compact?: boolean; rail?: string }
-
-function sliderClient($: EngineInterface, e: RenderInput, key: string, props: SliderProps, width: number) {
-  if (e.surface !== 'terminal' && e.surface !== 'desktop') return null
-  const { Client } = $.ui.resolve(e)
-  return Client({ key, module: './slider.tsx', props, width })
-}
-
-// The band's model control: a small track to drag, and the name, which opens
-// the picker inside the band.
+// The band's model control: the five positions as dots and the name, one
+// press that opens the picker inside the band.
 async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   const s = await read($, settings)
   if (!s.models.isShown) return null
@@ -1570,20 +1550,11 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   const at = activeSlot(c, s.models)
   const slot = at === null ? undefined : s.models.slots[at]
   const name = slot ? slotLabel(slot) : c.model ? modelLabel(familyOf(c.model) ?? c.model) : 'Model'
-  const n = s.models.slots.length
   return (
     <Box flexDirection="row" gap={1} flexShrink={0}>
-      {sliderClient($, e, 'model-track', {
-        labels: s.models.slots.map(slotLabel),
-        locked: s.models.slots.map(x => isLocked(x, s.models)),
-        active: at,
-        accent: CLAUDE,
-        compact: true,
-        rail: (c.theme ?? '').startsWith('light') ? '#dcdce0' : '#3a3b40',
-      }, (n - 1) * 5 + 3)}
       <Button
         key="model-chip"
-        label={`${c.fast ? '⚡ ' : ''}${name} ${isOpen ? '⌄' : '›'}`}
+        label={`${positionDots(s.models.slots.length, at)} ${c.fast ? '⚡ ' : ''}${name} ${isOpen ? '⌄' : '›'}`}
         plain
         dimColor={!isOpen}
         onPress={() => update($, isPickerOpen, x => !x)}
@@ -1593,13 +1564,16 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
 }
 
 // How many cells the chip's name takes, so the band leaves it room.
+// Where the session stands among the five positions: ●○○○○.
+const positionDots = (n: number, at: number | null) => Array.from({ length: n }, (_, i) => (i === at ? '●' : '○')).join('')
+
 async function chipNameLength($: EngineInterface) {
   const s = await read($, settings)
   const c = await read($, current)
   const at = activeSlot(c, s.models)
   const slot = at === null ? undefined : s.models.slots[at]
   const name = slot ? slotLabel(slot) : c.model ? modelLabel(familyOf(c.model) ?? c.model) : 'Model'
-  return name.length + (c.fast ? 2 : 0)
+  return s.models.slots.length + 1 + name.length + (c.fast ? 2 : 0)
 }
 
 // Claude's own orange: the model controls wear it in every look.
@@ -1758,14 +1732,12 @@ async function drawPicker($: EngineInterface, e: RenderInput<'Pane' | 'CommandOu
     </Box>
   )
 
-  // Drag on the terminal's slider; elsewhere the pill is a picture.
-  const track = e.surface === 'terminal' ? (
-    sliderClient($, e, 'model-slider', { labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }, slots.length * 14)
-  ) : Svg ? (
+  // The pill is a picture where the surface draws one; a press picks below.
+  const track = Svg ? (
     <Svg source={pill(slots.length, at, locked, PILL_FILL)} alt={`position ${at === null ? 'none' : at + 1} of ${slots.length}`} />
   ) : null
 
-  const picks = e.surface !== 'terminal' && (
+  const picks = (
     <Box flexDirection="row" flexWrap="wrap" gap={1}>
       {slots.map((x, i) => (
         <Button
@@ -1801,8 +1773,8 @@ async function drawPicker($: EngineInterface, e: RenderInput<'Pane' | 'CommandOu
   )
 }
 
-// The slider row: draggable on surfaces that run a `Client`, buttons elsewhere;
-// then the fast mode and output style switches.
+// The model row: a button per position, then the fast mode and output style
+// switches.
 async function drawModelRow($: EngineInterface, e: RenderInput<'AbovePrompt' | 'Pane' | 'CommandOutput'>) {
   const s = await read($, settings)
   if (!s.models.isShown) return null
@@ -1811,10 +1783,7 @@ async function drawModelRow($: EngineInterface, e: RenderInput<'AbovePrompt' | '
   const active = activeSlot(c, s.models)
   const labels = s.models.slots.map(slotLabel)
   const locked = s.models.slots.map(x => isLocked(x, s.models))
-  const room = (e.component === 'AbovePrompt' ? e.props.bodyColumns : (e.viewport?.columns ?? 80)) - 24
-  const slider = e.surface === 'terminal' || e.surface === 'desktop' ? (
-    sliderClient($, e, 'model-slider', { labels, locked, active, accent: C.accent }, Math.max(30, Math.min(labels.length * 14, room)))
-  ) : (
+  const slider = (
     <Box flexDirection="row" flexWrap="wrap" gap={1}>
       {labels.map((label, i) => (
         <Button

@@ -19,7 +19,7 @@ A usage gauge for Claude Code, built on [Claude Code Mods](https://x.com/ClaudeC
 
 - **Auto wrap-up** (off by default): separate rules for the 5-hour and weekly windows. When one passes its threshold while a task runs, a 10-second countdown, then a note into the running turn: finish the step, save, write a handoff. Once per window.
 - **/compact rule**: past a context percent you set (70% by default), remind you to `/compact`, or compact on its own while idle.
-- **Model control**: a draggable capsule slider in Claude's orange, plus the model name. Press the name and a picker opens inside the band: five positions, Fast mode, output style. Each position is a model and an effort level: an alias that follows the latest version (`sonnet`, `opus`…), a 1M variant, a pinned version (`claude-opus-5-5`…), or any id you type. Defaults: Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high. Fable stays locked until you turn on "Max plan" in settings.
+- **Model control**: one button in the band: the five positions as dots (●○○○○, the filled one is current) and the model name. Press it and a picker opens inside the band: five positions, Fast mode, output style. Each position is a model and an effort level: an alias that follows the latest version (`sonnet`, `opus`…), a 1M variant, a pinned version (`claude-opus-5-5`…), or any id you type. Defaults: Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high. Fable stays locked until you turn on "Max plan" in settings.
 - **Timeline**: a colored mark on each of your messages (green done, red failed, amber stopped) with a hover card. **History** (≡) lists, per prompt, the time, what you asked and what Claude answered (the opening of each, free), with a filter; a press jumps back to it. One-line AI summaries are off by default (one Haiku 5.5 call per prompt, uses tokens).
 - **Claude status & usage** (◉): claude.ai, the API, Claude Code and the rest, open incidents, and the usage just read. Fetched only when you press ↻ Refresh.
 - **You should know**: turn Anthropic's built-in side agent (`cc-plugin-you-should-know@builtin`) on or off.
@@ -74,7 +74,7 @@ For Claude Code Desktop, which takes no flags, add the folder's absolute path to
 | `/gauge compact 70\|remind\|auto\|off` | When to remind about, or run, /compact |
 | `/gauge model` | Open the model picker (inside the band) |
 | `/gauge model 1-5` | Switch to a position |
-| `/gauge models on\|off` | Show or hide the model control (slider and name together) |
+| `/gauge models on\|off` | Show or hide the model control |
 | `/gauge max on\|off` | You have a Max plan (unlocks Fable) |
 | `/gauge fast` | Toggle Fast mode |
 | `/gauge style [name]` | Next output style, or one by name |
@@ -120,7 +120,7 @@ Things that change the conversation: ■ Stop; auto wrap-up (a fixed note); the 
 - The timeline only knows messages since the mod loaded and is cleared on restart; a few turns without a message id cannot jump back.
 - The mod cannot see your plan: turn on "Max plan" yourself to unlock Fable.
 - Fast mode depends on your account (it may need usage credits).
-- Switching models from the slider leaves `/model` and `/effort` lines in the transcript.
+- Switching models from the picker leaves `/model` and `/effort` lines in the transcript.
 
 ### Development
 

@@ -12,7 +12,7 @@ Full documentation, screenshots and a Traditional Chinese version: <https://gith
 - **Done notice**: a toast when a turn that took over 20 seconds ends.
 - **History** (≡): each prompt with its time, the opening of what you asked and of Claude's answer, and a jump back to it.
 - **Claude status** (◉): the status page and your usage, fetched only when you press ↻ Refresh.
-- **Model control**: a slider over five model and effort presets, with Fast mode and output style beside it.
+- **Model control**: five model and effort presets you pick with a press, with Fast mode and output style beside them.
 - **Settings** (⚙ or `/gauge settings`): auto wrap-up near a limit, a `/compact` rule, three looks, text size, and switches for each feature.
 
 Clients that draw no plugin UI, such as cloud sessions, get a one-line usage summary under each answer instead. Only you see it; the model never reads it.
@@ -32,7 +32,7 @@ Clients that draw no plugin UI, such as cloud sessions, get a one-line usage sum
 
 **Commands it runs**: only when you press the matching control.
 
-- `/model` and `/effort` for the model slider.
+- `/model` and `/effort` for the model picker.
 - `/fast` for Fast mode.
 - `/config` (`outputStyle`) for the output style.
 - `/plugin enable` or `/plugin disable` for Anthropic's built-in "You should know" side agent (`cc-plugin-you-should-know@builtin`).

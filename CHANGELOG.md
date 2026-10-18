@@ -1,5 +1,9 @@
 # Changelog
 
+## context-gauge 1.2.0
+
+- The model control is buttons now, not a draggable slider. The band shows the five positions as dots with the model name (`●○○○○ Opus xhigh ›`), and a press opens the picker, where each position is a button. Anthropic's plugin directory could not read the slider's surface module, so the plugin no longer has one (`hooks/slider.tsx` is gone).
+
 ## context-gauge 1.1.7
 
 - For Anthropic's plugin directory: the slider's `Client` is created the way the mods documentation writes elements, `Client({ module: './slider.tsx', ... })`, so the directory can read its module path.
