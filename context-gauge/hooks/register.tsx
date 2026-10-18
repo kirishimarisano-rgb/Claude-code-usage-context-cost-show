@@ -690,6 +690,7 @@ const COMMANDS = [
   '/gauge marks on|off        timeline marks on your messages',
   '/gauge status              Claude service status (checks status.claude.com)',
   '/gauge usage               ask Anthropic for the 5-hour and weekly usage now',
+  '/gauge help                this list',
 ].join('\n')
 
 async function onSlide($: EngineInterface, e: { data: unknown }) {
@@ -847,6 +848,7 @@ export const register: Register = on => {
       return { text: opened.isPlaced ? 'Gauge pane opened.' : `Gauge pane waits: ${opened.reason}` }
     }
     if (sub === 'settings') return { text: await settingsText($) }
+    if (sub === 'help') return { text: `\`\`\`\n${COMMANDS}\n\`\`\`` }
     if (sub && sub !== 'show') return { text: `Unknown: /gauge ${sub}\n\`\`\`\n${COMMANDS}\n\`\`\`` }
     // A text snapshot for any client that draws the row as text; clients
     // that draw plugin trees replace it with the live gauge.

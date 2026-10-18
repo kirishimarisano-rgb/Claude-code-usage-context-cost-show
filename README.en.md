@@ -65,6 +65,7 @@ For Claude Code Desktop, which takes no flags, add the folder's absolute path to
 | `/gauge` | The gauge in the transcript (a text snapshot where plugin UI is not drawn) |
 | `/gauge pane` | The side pane (`f` folds it) |
 | `/gauge settings` | Settings |
+| `/gauge help` | List every command |
 | `/gauge usage` | Ask Anthropic for the 5-hour and weekly usage now |
 | `/gauge status` | Check Claude's service status once |
 | `/gauge history` | The History window |

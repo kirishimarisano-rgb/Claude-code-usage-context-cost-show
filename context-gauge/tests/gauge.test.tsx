@@ -768,3 +768,11 @@ test('/gauge usage says so when there is no Claude login', async ($, on) => {
   on('session.authorize', () => ({ value: null }))
   expect((await run($, 'usage')).text).toMatch(/no Claude login/)
 })
+
+test('/gauge help lists the commands', async ($, on) => {
+  engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  const text = (await run($, 'help')).text
+  expect(text).toMatch(/\/gauge settings/)
+  expect(text).not.toMatch(/Unknown/)
+})

@@ -1,5 +1,10 @@
 # Changelog
 
+## context-gauge 1.1.2
+
+- Ready for Anthropic's plugin directory: a README inside the plugin folder that lists everything it sends, runs and changes; `displayName`, `homepage`, `repository` and `keywords` in `plugin.json`.
+- `/gauge help` lists the commands.
+
 ## Claude Widget 0.3.0
 
 - Clear glass by default: the desktop shows through untouched, with a tint you set (Settings → Tint) and a lit rim. Windows' frosted acrylic is still there (Settings → Background), but Windows turns it solid grey while the window is not focused.

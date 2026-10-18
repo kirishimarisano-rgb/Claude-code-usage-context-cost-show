@@ -69,6 +69,7 @@ Windows 的路徑寫成 `C:\\Users\\you\\...\\context-gauge`。要改檔後自�
 | `/gauge ysk on\|off` | You should know 側邊 agent |
 | `/gauge history` | History 視窗 |
 | `/gauge status` | 查一次 Claude 服務狀態 |
+| `/gauge help` | 列出所有指令 |
 | `/gauge usage` | 立刻向 Anthropic 查 5h / 週額度 |
 | `/gauge summary on\|off` | 時間軸的 AI 摘要（會用 token） |
 | `/gauge marks on\|off` | 訊息上的時間軸色線 |

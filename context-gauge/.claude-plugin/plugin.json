@@ -1,10 +1,21 @@
 {
   "name": "context-gauge",
-  "version": "1.1.1",
+  "displayName": "Context Gauge",
+  "version": "1.1.2",
   "description": "Context, 5h/7d limits, cost, thinking time, tool timeline and a Stop button above the prompt; a foldable side pane; opt-in auto wrap-up near the limit",
   "author": {
     "name": "kirishimarisano-rgb"
   },
+  "homepage": "https://github.com/kirishimarisano-rgb/Claude-code-usage-context-cost-show",
+  "repository": "https://github.com/kirishimarisano-rgb/Claude-code-usage-context-cost-show",
   "license": "MIT",
+  "keywords": [
+    "usage",
+    "context",
+    "rate-limits",
+    "cost",
+    "status",
+    "mod"
+  ],
   "types": "./types/index.d.ts"
 }
