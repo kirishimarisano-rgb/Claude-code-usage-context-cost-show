@@ -47,6 +47,15 @@ Clients that draw no plugin UI, such as cloud sessions, get a one-line usage sum
 
 The output of `/gauge` commands stays in the transcript like any command output. The band, the panes and the line under each answer are for you only.
 
+## For reviewers: the mod's code, call by call
+
+- **Hosts it contacts**: `api.anthropic.com` (`/api/oauth/usage`) and `status.claude.com` (`/api/v2/summary.json`), each written as a fixed address at its `$.http.fetch` call. Both are GET requests with no body. Neither answer is ever turned into a command: the code only reads numbers and status words from them, and caps every text it keeps.
+- **Slash commands it runs** (`$.command.run`): only `/model`, `/effort`, `/fast` and `/plugin enable|disable cc-plugin-you-should-know@builtin`, each when you press its control. The `/model` and `/effort` arguments come from your own five presets, and a model id must match `^[A-Za-z0-9._:\-\[\]]{1,80}$` both when you type it and when it is used.
+- **Settings it writes** (`$.config.set`): only `outputStyle`, when you pick a style. It reads the theme and output style with `$.config.list`. It does not hook `config.set`, permission checks, agents or files, so it never takes a permission decision.
+- **What it reads of the conversation**: `session.append` and `turn.start` see your prompts, `turn.complete` sees the answer's text, and `tool.call` sees tool names and edited file paths. All of it stays in memory to draw History and the marks, and is cleared on restart. Only one thing leaves the machine: with AI summaries on, the opening of a prompt and of its answer go to Anthropic's model API through `$.model.complete`, the same way Claude Code's own requests do.
+- **Conversation changes**: `$.turn.abort` (■ Stop), `$.session.append` (the fixed wrap-up note, off by default) and `$.session.compact` (the /compact rule set to Auto, off by default).
+- **`tests/`**: the automated tests stub `http.fetch`, `model.complete` and other engine calls with fixed answers, so no test reaches the network. Claude Code never loads them in a session.
+
 ## Known limits
 
 - Cloud sessions cannot read usage with their login, so their limits come from Claude's replies only.

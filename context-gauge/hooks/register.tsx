@@ -124,9 +124,9 @@ const dur = (ms: number) => {
   return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`
 }
 
-const bar = (ratio: number, width: number, on = '━', off = '─') => {
+const bar = (ratio: number, width: number, full = '━', empty = '─') => {
   const n = Math.max(0, Math.min(width, Math.round(ratio * width)))
-  return [on.repeat(n), off.repeat(width - n)] as const
+  return [full.repeat(n), empty.repeat(width - n)] as const
 }
 
 const tone = (ratio: number, warnAt: number, hotAt: number) =>
@@ -160,9 +160,9 @@ const PHASE: Record<Phase, string> = {
 }
 
 const COMPACT_LABEL: Record<CompactMode, string> = { off: 'Off', remind: 'Remind', auto: 'Auto' }
-const FOOTER_LABEL: Record<FooterMode, string> = { auto: 'Auto', on: 'On', off: 'Off' }
+const FOOTER_LABEL: Record<FooterMode, string> = { auto: 'Auto', 'on': 'On', off: 'Off' }
 const nextCompact: Record<CompactMode, CompactMode> = { off: 'remind', remind: 'auto', auto: 'off' }
-const nextFooter: Record<FooterMode, FooterMode> = { auto: 'on', on: 'off', off: 'auto' }
+const nextFooter: Record<FooterMode, FooterMode> = { auto: 'on', 'on': 'off', off: 'auto' }
 const STYLE_LABEL: Record<LookStyle, string> = { classic: 'Classic', minimal: 'Minimal', terminal: 'Terminal' }
 const nextStyle: Record<LookStyle, LookStyle> = { classic: 'minimal', minimal: 'terminal', terminal: 'classic' }
 const SIZES: Look['size'][] = ['s', 'm', 'l']
@@ -597,7 +597,6 @@ async function jumpTo($: EngineInterface, id: string) {
 
 // ---------- usage limits, asked of Anthropic ----------
 
-const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const USAGE_EVERY_MS = 60_000
 let usageAskedAt = 0
 
@@ -614,7 +613,7 @@ async function checkUsage($: EngineInterface) {
   try {
     const auth = await $.session.authorize()
     if (!auth) return void (await fail('no Claude login (API key or gateway sessions have no usage windows)'))
-    const r = await $.http.fetch(USAGE_URL, { auth: auth.handle, headers: { 'anthropic-beta': 'oauth-2025-04-20' } })
+    const r = await $.http.fetch('https://api.anthropic.com/api/oauth/usage', { auth: auth.handle, headers: { 'anthropic-beta': 'oauth-2025-04-20' } })
     if (r.status === 401 || r.status === 403) return void (await fail('this login cannot read usage (cloud sessions cannot)'))
     if (r.status === 429) return void (await fail('asked too often; try again in a minute'))
     if (!r.ok) return void (await fail(`HTTP ${r.status}`))
@@ -645,13 +644,12 @@ async function checkUsage($: EngineInterface) {
 
 // ---------- Claude's service status ----------
 
-const STATUS_URL = 'https://status.claude.com/api/v2/summary.json'
 
 // Asks status.claude.com once; only the Refresh press calls it.
 async function refreshStatus($: EngineInterface) {
   const at = await $.clock.now()
   try {
-    const r = await $.http.fetch(STATUS_URL)
+    const r = await $.http.fetch('https://status.claude.com/api/v2/summary.json', {})
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     const d = JSON.parse(r.text) as {
       status?: { indicator?: string; description?: string }
@@ -766,12 +764,6 @@ export const register: Register = on => {
   on('ui.message', { element: 'model-slider' }, onSlide)
   on('ui.message', { element: 'model-track' }, onSlide)
 
-  // Follow /config's theme (the SVG's text colors) and output style.
-  on('config.set', async ($, e, next) => {
-    const r = await next(e)
-    if (e.key === 'theme' || e.key === 'outputStyle') await loadModes($)
-    return r
-  })
 
   on('command.run', { command: 'gauge' }, async ($, e) => {
     const [sub, a, b] = e.args.trim().toLowerCase().split(/\s+/)
@@ -947,6 +939,9 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     const now = await $.clock.now()
     delivered = []
+    // Follow /config's theme (the SVG's text colors) and output style: read,
+    // never hooked, so no settings write passes through this mod.
+    quietly(loadModes($))
     await update($, live, (): Live => ({
       turnId: e.turnId,
       startedAt: now,
@@ -1577,19 +1572,20 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   return (
     <Box flexDirection="row" gap={1} flexShrink={0}>
       {Client && (
-        <Client
-          key="model-track"
-          module="./slider.tsx"
-          props={{
+        // The module path as the object form spells it, a literal the directory reads.
+        h(Client, {
+          key: 'model-track',
+          module: './slider.tsx',
+          props: {
             labels: s.models.slots.map(slotLabel),
             locked: s.models.slots.map(x => isLocked(x, s.models)),
             active: at,
             accent: CLAUDE,
             compact: true,
             rail: (c.theme ?? '').startsWith('light') ? '#dcdce0' : '#3a3b40',
-          }}
-          width={(n - 1) * 5 + 3}
-        />
+          },
+          width: (n - 1) * 5 + 3,
+        })
       )}
       <Button
         key="model-chip"
@@ -1771,7 +1767,7 @@ async function drawPicker($: EngineInterface, e: RenderInput<'Pane' | 'CommandOu
   )
 
   const track = Client ? (
-    <Client key="model-slider" module="./slider.tsx" props={{ labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }} width={slots.length * 14} />
+    h(Client, { key: 'model-slider', module: './slider.tsx', props: { labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }, width: slots.length * 14 })
   ) : Svg ? (
     <Svg source={pill(slots.length, at, locked, PILL_FILL)} alt={`position ${at === null ? 'none' : at + 1} of ${slots.length}`} />
   ) : null
@@ -1828,7 +1824,7 @@ async function drawModelRow($: EngineInterface, e: RenderInput<'AbovePrompt' | '
   const locked = s.models.slots.map(x => isLocked(x, s.models))
   const room = (e.component === 'AbovePrompt' ? e.props.bodyColumns : (e.viewport?.columns ?? 80)) - 24
   const slider = Client ? (
-    <Client key="model-slider" module="./slider.tsx" props={{ labels, locked, active, accent: C.accent }} width={Math.max(30, Math.min(labels.length * 14, room))} />
+    h(Client, { key: 'model-slider', module: './slider.tsx', props: { labels, locked, active, accent: C.accent }, width: Math.max(30, Math.min(labels.length * 14, room)) })
   ) : (
     <Box flexDirection="row" flexWrap="wrap" gap={1}>
       {labels.map((label, i) => (

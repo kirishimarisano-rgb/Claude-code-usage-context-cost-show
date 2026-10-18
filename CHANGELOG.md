@@ -1,5 +1,11 @@
 # Changelog
 
+## context-gauge 1.1.4
+
+- For Anthropic's plugin directory: the slider's module path is written in the object form the directory reads, the two fetch addresses are fixed at their calls, and a parameter that shadowed `on` is renamed.
+- The mod no longer hooks `config.set`. It reads the theme and output style when a turn starts, so it can never sit in the way of a settings write.
+- A plugin icon, and a README section that walks a reviewer through every call that sends, runs or changes something.
+
 ## context-gauge 1.1.3
 
 - Fixed: a prompt sent while Claude was working took over the line of the task still running. That line turned amber as if stopped, and its time, answer and AI summary landed on the new prompt. Each History line now belongs to the turn that answered it.
