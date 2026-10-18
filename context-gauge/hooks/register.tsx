@@ -213,6 +213,8 @@ const svgOf = ($: EngineInterface, e: RenderInput, style: LookStyle) =>
 const quietly = (work: Promise<unknown>) => void work.catch(() => undefined)
 
 let ticker: Timer | null = null
+// What reached the running turn as deliveries (prompts sent while it ran).
+let delivered: string[] = []
 let wrapTimer: Timer | null = null
 let isCompacting = false
 
@@ -395,6 +397,7 @@ const MODEL_CHOICES = [
   'fable[1m]',
   'claude-sonnet-5-5',
   'claude-opus-5-5',
+  'claude-haiku-5-5',
   'claude-haiku-4-5',
   'claude-fable-5-1',
 ]
@@ -534,32 +537,57 @@ const clock = (at: number) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const updateRunning = ($: EngineInterface, fn: (x: Entry) => Entry) =>
-  update($, timeline, list => {
-    const i = list.map(x => x.status).lastIndexOf('running')
-    return i === -1 ? list : list.map((x, j) => (j === i ? fn(x) : x))
-  })
+// The line turn `turnId` claimed at turn.start.
+const updateTurn = ($: EngineInterface, turnId: string, fn: (x: Entry) => Entry) =>
+  update($, timeline, list => list.map(x => (x.turnId === turnId ? fn(x) : x)))
+
+// Same prompt, as the transcript stored it and as the turn read it.
+const sameText = (a: string, b: string) => {
+  const [x, y] = [a.slice(0, 100), b.slice(0, 100)]
+  return x !== '' && y !== '' && (x.startsWith(y) || y.startsWith(x))
+}
+
+// The newest Haiku where the account has it, else whatever `haiku` names
+// there (Bedrock, Vertex and gateways may not serve 5.5 yet).
+const SUMMARY_MODELS = ['claude-haiku-5-5', 'haiku']
 
 async function summarize($: EngineInterface, id: string, prompt: string, answer: string) {
-  const r = await $.model.complete({
-    model: 'haiku',
-    effort: 'low',
-    maxTokens: 60,
-    prompt: [
-      'In one short line (at most 12 words, in the language of the request), say what was done.',
-      `Request: ${prompt.slice(0, 600)}`,
-      `Result: ${answer.slice(0, 1500)}`,
-    ].join('\n'),
-  })
-  if (r.isAnswered && r.text.trim()) {
-    await update($, timeline, list => list.map(x => (x.id === id ? { ...x, summary: firstLine(r.text) } : x)))
+  const ask = (model: string) =>
+    $.model.complete({
+      model,
+      effort: 'low',
+      maxTokens: 80,
+      timeoutMs: 30_000,
+      prompt: [
+        'In one short line (at most 12 words, in the language of the request), say what was done.',
+        `Request: ${prompt.slice(0, 600)}`,
+        `Result: ${answer.slice(0, 1500)}`,
+      ].join('\n'),
+    })
+  let why = 'no reply'
+  for (const model of SUMMARY_MODELS) {
+    try {
+      const r = await ask(model)
+      if (r.isAnswered && r.text.trim()) {
+        const line = firstLine(r.text).replace(/^["'“「]+|["'”」]+$/g, '').slice(0, 160)
+        await update($, timeline, list => list.map(x => (x.id === id ? { ...x, summary: line, summaryError: undefined } : x)))
+        return
+      }
+      why = r.isAnswered ? 'empty reply' : r.reason === 'api-error' ? `${r.error}${r.status ? ` ${r.status}` : ''}` : r.reason
+      // Only a model this account cannot use is worth a second try.
+      if (r.isAnswered || r.reason !== 'api-error' || ![400, 403, 404].includes(r.status ?? 0)) break
+    } catch (error) {
+      // The engine refuses a model it will not send (not on the allowlist).
+      why = String(error).slice(0, 80)
+    }
   }
+  await update($, timeline, list => list.map(x => (x.id === id ? { ...x, summaryError: why } : x)))
 }
 
 const openTimeline = ($: EngineInterface) => $.ui.open({ id: TIMELINE_PANE, title: 'History' })
 
 async function jumpTo($: EngineInterface, id: string) {
-  if (id.startsWith('turn-')) {
+  if (id.startsWith('turn-') || id.startsWith('queue-')) {
     $.ui.toast('This line has no message to jump to.', { timeoutMs: 4000 })
     return
   }
@@ -884,16 +912,33 @@ export const register: Register = on => {
   // is what a press scrolls back to.
   on('session.append', async ($, e, next) => {
     const stored = await next(e)
-    if (!e.agentId && e.door === 'prompt' && e.message.type === 'user') {
+    // A prompt is a `prompt` row; one sent while Claude works is first a
+    // `queue` row, then folded into the running turn or given a turn of its own.
+    const isPrompt = e.door === 'prompt' && e.message.type === 'user'
+    const isQueued = e.door === 'queue' && e.message.type === 'user'
+    // A queued prompt folded into the running turn reaches the model as a
+    // delivery: kept to tell such a prompt from one that waits for its own turn.
+    if (!e.agentId && e.door === 'delivery') {
+      delivered.push(JSON.stringify(e.message.content).replace(/\\n|\s+/g, ' ').slice(0, 4000))
+    }
+    if (!e.agentId && (isPrompt || isQueued)) {
       const text = e.message.content
         .map(b => (b.type === 'text' && typeof b.text === 'string' ? b.text : ''))
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim()
+        .slice(0, 300)
       if (text) {
         const at = await $.clock.now()
-        const entry: Entry = { id: stored.uuid ?? e.uuid, text: text.slice(0, 300), at, ms: null, tools: 0, errors: 0, files: [], status: 'running' }
-        await update($, timeline, list => [...list.map(x => (x.status === 'running' ? { ...x, status: 'stopped' as const } : x)), entry].slice(-100))
+        const id = isPrompt ? (stored.uuid ?? e.uuid) : `queue-${stored.uuid ?? e.uuid ?? at}`
+        const entry: Entry = { id, text, at, ms: null, tools: 0, errors: 0, files: [], status: 'running' }
+        await update($, timeline, list => {
+          const waiting = list.find(x => !x.turnId && x.id.startsWith('queue-') && sameText(x.text, text))
+          // The queued line gets the row's id once the prompt is stored, so a press can jump to it.
+          if (isPrompt && waiting) return list.map(x => (x === waiting ? { ...x, id } : x))
+          if (isQueued && waiting) return list
+          return [...list, entry].slice(-100)
+        })
       }
     }
     return stored
@@ -901,6 +946,7 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     const now = await $.clock.now()
+    delivered = []
     await update($, live, (): Live => ({
       turnId: e.turnId,
       startedAt: now,
@@ -916,22 +962,22 @@ export const register: Register = on => {
     }))
     await ensureTicker($)
     await checkWrap($, (await $.session.usage()).rateLimits)
-    // A turn whose prompt row was not seen (or one started without one) still
-    // gets its line; such a line cannot jump back.
-    const list = await read($, timeline)
-    if (e.text.trim() && list[list.length - 1]?.status !== 'running') {
-      const entry: Entry = {
-        id: `turn-${e.turnId}`,
-        text: e.text.replace(/\s+/g, ' ').trim().slice(0, 300),
-        at: now,
-        ms: null,
-        tools: 0,
-        errors: 0,
-        files: [],
-        status: 'running',
+    // The turn claims the line of the prompt it answers: the oldest unclaimed
+    // one with its text. A turn whose prompt row was not seen (or one started
+    // without one) gets a line of its own, which cannot jump back.
+    const text = e.text.replace(/\s+/g, ' ').trim().slice(0, 300)
+    await update($, timeline, list => {
+      // A line whose turn never completed has ended.
+      const settled = list.map(x => (x.status === 'running' && x.turnId && x.turnId !== e.turnId ? { ...x, status: 'stopped' as const } : x))
+      const free = settled.filter(x => !x.turnId)
+      const mine = free.find(x => sameText(x.text, text)) ?? (free.length === 1 && free[0]!.status === 'running' ? free[0] : undefined)
+      if (mine) {
+        return settled.map(x => (x === mine ? { ...x, turnId: e.turnId, status: 'running' as const, ms: null, at: x.at } : x))
       }
-      await update($, timeline, x => [...x, entry].slice(-100))
-    }
+      if (!text) return settled
+      const entry: Entry = { id: `turn-${e.turnId}`, turnId: e.turnId, text, at: now, ms: null, tools: 0, errors: 0, files: [], status: 'running' }
+      return [...settled, entry].slice(-100)
+    })
 
     return next(e)
   })
@@ -985,7 +1031,8 @@ export const register: Register = on => {
       l ? { ...l, tools: l.tools.map(t => (t.id === row.id ? { ...t, ms, isError } : t)) } : l,
     )
     const path = EDITS.has(String(e.tool)) ? (e as { file_path?: unknown }).file_path : undefined
-    await updateRunning($, x => ({
+    const turnId = (await read($, live))?.turnId
+    if (turnId) await updateTurn($, turnId, x => ({
       ...x,
       tools: x.tools + 1,
       errors: x.errors + (isError ? 1 : 0),
@@ -1011,14 +1058,24 @@ export const register: Register = on => {
       }
       await update($, history, h => [...h, row].slice(-20))
       await update($, live, () => null)
-      const finished = await updateRunning($, x => ({
+      const finished = await updateTurn($, e.turnId, x => ({
         ...x,
         ms: e.durationMs,
         status: e.isAborted ? 'stopped' : e.reason === 'error' || e.reason === 'refusal' || x.errors > 0 ? 'error' : 'ok',
         answer: firstLine(e.answer).slice(0, 200) || undefined,
       }))
-      const entry = [...finished].reverse().find(x => x.ms === e.durationMs)
-      if (entry && (await read($, settings)).timeline.isAiSummary) quietly(summarize($, entry.id, entry.text, e.answer))
+      const entry = finished.find(x => x.turnId === e.turnId)
+      // Prompts sent during this turn that no turn claimed were folded into
+      // it: they end as it did. A later turn that answers one claims it back.
+      const folded = finished.filter(x => !x.turnId && x.status === 'running' && delivered.some(d => d.includes(x.text.slice(0, 80))))
+      if (entry && folded.length) {
+        const ids = folded.map(x => x.id)
+        await update($, timeline, list => list.map(x => (ids.includes(x.id) ? { ...x, status: entry.status } : x)))
+      }
+      if (entry && e.answer.trim() && (await read($, settings)).timeline.isAiSummary) {
+        const asked = folded.length ? `${entry.text}\nAlso asked during the task: ${folded.map(x => x.text).join(' / ')}` : entry.text
+        quietly(summarize($, entry.id, asked, e.answer))
+      }
       const mode = (await read($, settings)).footer
       const isShown = mode === 'on' || (mode === 'auto' && (await $.session.surfaces()).length === 0)
       if (isShown) {
@@ -1240,7 +1297,7 @@ export const register: Register = on => {
     const sub = e.props.args.trim().toLowerCase()
     if (sub === '') return drawGauge($, e, e.viewport?.columns ?? 60)
     if (sub === 'settings') return drawSettings($, e)
-    if (sub === 'timeline') return drawTimeline($, e)
+    if (sub === 'timeline' || sub === 'history') return drawTimeline($, e)
     if (sub === 'model') return drawPicker($, e)
     return next(e)
   })
@@ -1598,7 +1655,7 @@ const statusColor = (x: Entry) => (x.status === 'ok' ? C.ok : x.status === 'erro
 const entryCard = (x: Entry, now: number) =>
   [
     x.summary ?? (x.text.length > 48 ? `${x.text.slice(0, 48)}…` : x.text),
-    x.ms === null ? `running ${dur(now - x.at)}` : dur(x.ms),
+    x.ms !== null ? dur(x.ms) : x.status === 'running' ? (x.turnId ? `running ${dur(now - x.at)}` : 'waiting') : 'sent mid-task',
     x.tools ? `${x.tools} tools` : '',
     x.errors ? `${x.errors} failed` : '',
     x.files.slice(0, 3).join(', '),
@@ -1812,13 +1869,13 @@ async function timelineText($: EngineInterface) {
     .slice(-20)
     .reverse()
     .map(x => {
-      const meta = [x.ms === null ? 'running' : dur(x.ms), x.tools ? `${x.tools} tools` : '', x.errors ? `${x.errors} failed` : '', x.files.join(', ')]
+      const meta = [x.ms !== null ? dur(x.ms) : x.status === 'running' ? (x.turnId ? 'running' : 'waiting') : 'sent mid-task', x.tools ? `${x.tools} tools` : '', x.errors ? `${x.errors} failed` : '', x.files.join(', ')]
         .filter(Boolean)
         .join(' · ')
       return [
         `${STATUS_DOT[x.status]} ${clock(x.at)}  You: ${short(x.text, 60)}`,
         x.answer ? `      Claude: ${short(x.answer, 70)}` : '',
-        x.summary ? `      ✦ ${x.summary}` : '',
+        x.summary ? `      ✦ ${x.summary}` : x.summaryError ? `      ✦ no summary (${x.summaryError})` : '',
         `      ${meta}`,
       ]
         .filter(Boolean)
@@ -1856,7 +1913,7 @@ async function drawTimeline($: EngineInterface, e: RenderInput<'Pane' | 'Command
         .slice(0, 50)
         .map(x => {
           const meta = [
-            x.ms === null ? `running ${dur(now - x.at)}` : dur(x.ms),
+            x.ms !== null ? dur(x.ms) : x.status === 'running' ? (x.turnId ? `running ${dur(now - x.at)}` : 'waiting') : 'sent mid-task',
             x.tools ? `${x.tools} tools` : '',
             x.errors ? `${x.errors} failed` : '',
             x.files.slice(0, 3).join(', '),
@@ -1881,7 +1938,12 @@ async function drawTimeline($: EngineInterface, e: RenderInput<'Pane' | 'Command
                   <Text>{x.summary}</Text>
                 </Box>
               )}
-              {!x.summary && isAi && x.ms !== null && now - (x.at + x.ms) < 60_000 && (
+              {!x.summary && x.summaryError && (
+                <Box paddingLeft={2}>
+                  <Text dimColor>✦ no summary ({x.summaryError})</Text>
+                </Box>
+              )}
+              {!x.summary && !x.summaryError && isAi && x.ms !== null && now - (x.at + x.ms) < 60_000 && (
                 <Box paddingLeft={2}>
                   <Text dimColor>✦ summarizing…</Text>
                 </Box>

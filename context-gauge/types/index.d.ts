@@ -124,6 +124,10 @@ export type Entry = {
   // The first line of Claude's answer, kept free of any model call.
   answer?: string
   summary?: string
+  // Why the AI summary could not be made, when it could not.
+  summaryError?: string
+  // The turn that answered this prompt, once one claimed it.
+  turnId?: string
 }
 
 export type SettingsTab = 'usage' | 'models' | 'timeline' | 'display'

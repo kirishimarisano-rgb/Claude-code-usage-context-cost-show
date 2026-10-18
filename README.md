@@ -17,7 +17,7 @@
 - **自動收尾（預設關閉）**：5h、週額度各自設定開關與門檻；任務進行中達到門檻時倒數 10 秒，然後在正在跑的那一輪插入收尾指示
 - **/compact 規則**：context 到設定的百分比時，提醒你 /compact（預設 70%），或閒置時自動 /compact
 - **模型切換**：細條上一個可拖的膠囊滑塊（Claude 橘色填到目前檔位、白色圓鈕）加模型名稱，兩者一起顯示或一起隱藏；按名稱，選擇器在細條內展開：五個檔位、Fast mode、輸出風格，選完自動收起。每一格可選簡稱（sonnet、opus…，跟著最新版）、1M 版本、指定版本（claude-opus-5-5…），或在設定頁輸入任何模型 id。預設 Sonnet low → Sonnet high → Opus medium → Opus xhigh → Fable high；Fable 只給 Max 方案，要在設定頁打開「Max plan」才會解鎖。
-- **時間軸**：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片（可在設定頁關閉）。細條上的 ≡ 打開 **History** 視窗：每則訊息的時間、你說了什麼、Claude 做了什麼（各取開頭，不花 token），可篩選，點一下跳回那段對話；AI 一句話摘要預設關閉（每段呼叫一次 Haiku，會用 token）。
+- **時間軸**：你每則訊息左邊一條色線（綠完成、紅出錯、黃中止），滑鼠停上去浮出卡片（可在設定頁關閉）。細條上的 ≡ 打開 **History** 視窗：每則訊息的時間、你說了什麼、Claude 做了什麼（各取開頭，不花 token），可篩選，點一下跳回那段對話；AI 一句話摘要預設關閉（每段呼叫一次 Haiku 5.5，會用 token）。
 - **Claude 服務狀態與額度**：細條上的 ◉ 在細條內展開 claude.ai、API、Claude Code 等服務的狀態、進行中的事件，以及剛查到的額度；只有按 ↻ Refresh 才會查詢。
 - **You should know**：Anthropic 內建的側邊 agent（`cc-plugin-you-should-know@builtin`），可在設定頁一鍵開關。
 - **設定頁**：`/gauge settings`，或細條旁的 ⚙；分成 Usage / Models / Timeline / Display 四頁
@@ -100,7 +100,7 @@ claude plugin install context-gauge@kirishima-mods
 
 `/gauge` 系列指令的輸出會留在對話紀錄裡，模型讀得到（每次約幾十到一兩百 token；`/gauge history` 會帶出你先前訊息的開頭）。每輪回答下方那一行和所有細條、面板則只給你看。
 
-會影響對話的只有：■ Stop、自動收尾（插入一段收尾提示）、/compact 規則設為 Auto 時的自動壓縮（壓縮本身會呼叫一次模型），以及你按下的模型、Fast、輸出風格、You should know 切換（透過 `/model`、`/effort`、`/fast`、`/plugin` 與 `/config`）。時間軸的 AI 摘要開啟時，每段會呼叫一次 Haiku。
+會影響對話的只有：■ Stop、自動收尾（插入一段收尾提示）、/compact 規則設為 Auto 時的自動壓縮（壓縮本身會呼叫一次模型），以及你按下的模型、Fast、輸出風格、You should know 切換（透過 `/model`、`/effort`、`/fast`、`/plugin` 與 `/config`）。時間軸的 AI 摘要開啟時，每段會呼叫一次 Haiku 5.5（帳號沒有 5.5 時改用 `haiku` 指到的版本）。
 
 ### 安全性
 

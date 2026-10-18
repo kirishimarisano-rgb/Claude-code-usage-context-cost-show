@@ -28,7 +28,7 @@ Clients that draw no plugin UI, such as cloud sessions, get a one-line usage sum
 - `https://api.anthropic.com/api/oauth/usage` reads your 5-hour and weekly usage, the same figures as `/usage`. It runs at session start, on ↻ Refresh, and on `/gauge usage`, at most once a minute. You can turn off the start-up check in settings. Claude Code attaches your login itself: the plugin only gets an opaque handle, never the token, and the handle can only reach Anthropic.
 - `https://status.claude.com/api/v2/summary.json` reads Claude's public service status, only when you press ↻ Refresh. It sends no credentials.
 
-**Model calls**: only if you turn on AI summaries in History (off by default). It then makes one short Haiku call per prompt, and that uses tokens.
+**Model calls**: only if you turn on AI summaries in History (off by default). It then makes one short Haiku 5.5 call per prompt (or whichever Haiku `haiku` names where 5.5 is not served), and that uses tokens. A prompt you send while Claude is working is summarized with the task it joined.
 
 **Commands it runs**: only when you press the matching control.
 

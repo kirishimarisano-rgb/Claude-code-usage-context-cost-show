@@ -776,3 +776,89 @@ test('/gauge help lists the commands', async ($, on) => {
   expect(text).toMatch(/\/gauge settings/)
   expect(text).not.toMatch(/Unknown/)
 })
+
+test('a prompt sent while Claude works keeps its own line, and summaries land on the right one', async ($, on) => {
+  const clock = engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'no surface places panes' } }))
+  const asked: string[] = []
+  on('model.complete', (_$, e) => {
+    const x = e as { model: string; prompt: string }
+    asked.push(x.model)
+    if (x.model === 'claude-haiku-5-5' && x.prompt.includes('second')) {
+      return { value: { isAnswered: false, reason: 'api-error', status: 404, error: 'invalid_request', usage: {} } } as never
+    }
+    return { value: { isAnswered: true, text: `"Did ${x.prompt.includes('second') ? 'two' : 'one'}"\nmore`, usage: {} } } as never
+  })
+  await measured($, measure(60_000, 10))
+  await run($, 'summary on')
+  const prompt = (uuid: string, text: string) =>
+    $.session.append({ door: 'prompt', uuid, message: { type: 'user', content: [{ type: 'text', text }] } } as never)
+
+  await prompt('u1', 'first task')
+  await $.turn.start({ text: 'first task', turnId: 't1' })
+  // Sent while t1 runs and answered by a turn of its own: t1 must not take it over.
+  await $.session.append({ door: 'queue', uuid: 'q2', message: { type: 'user', content: [{ type: 'text', text: 'second task' }] } } as never)
+  await $.turn.complete({ answer: 'one done', durationMs: 5000, isAborted: false, turnId: 't1', reason: 'answer' })
+  await prompt('u2', 'second task')
+  await $.turn.start({ text: 'second task', turnId: 't2' })
+  await $.turn.complete({ answer: 'two done', durationMs: 3000, isAborted: false, turnId: 't2', reason: 'answer' })
+  await clock.advance(1)
+
+  const text = (await run($, 'history')).text
+  expect(text).toMatch(/🟢 .*You: first task\n\s+Claude: one done\n\s+✦ Did one\n\s+5s/)
+  expect(text).toMatch(/🟢 .*You: second task\n\s+Claude: two done\n\s+✦ Did two\n\s+3s/)
+  // Haiku 5.5 first; an account without it falls back to the haiku alias.
+  expect(asked).toEqual(['claude-haiku-5-5', 'claude-haiku-5-5', 'haiku'])
+})
+
+test('a prompt folded into the running turn ends with it, and a failed summary says why', async ($, on) => {
+  const clock = engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'no surface places panes' } }))
+  const prompts: string[] = []
+  on('model.complete', (_$, e) => {
+    prompts.push((e as { prompt: string }).prompt)
+    return { value: { isAnswered: false, reason: 'api-error', status: 429, error: 'rate_limit', usage: {} } } as never
+  })
+  await measured($, measure(60_000, 10))
+  await run($, 'summary on')
+  const prompt = (uuid: string, text: string) =>
+    $.session.append({ door: 'prompt', uuid, message: { type: 'user', content: [{ type: 'text', text }] } } as never)
+  await prompt('u1', 'build it')
+  await $.turn.start({ text: 'build it', turnId: 't1' })
+  // Sent while t1 runs: the engine delivers it into the turn, and keeps a queue record.
+  await $.session.append({ door: 'delivery', uuid: 'd1', message: { type: 'attachment', content: [{ type: 'text', text: '<system-reminder>\nThe user sent a new message while you were working:\nalso add tests\n</system-reminder>' }] } } as never)
+  await $.session.append({ door: 'queue', uuid: 'q1', message: { type: 'user', content: [{ type: 'text', text: 'also add tests' }] } } as never)
+  await $.turn.complete({ answer: 'built, with tests', durationMs: 9000, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(1)
+  const text = (await run($, 'history')).text
+  expect(text).toMatch(/🟢 .*You: also add tests\n\s+sent mid-task/)
+  expect(text).toMatch(/You: build it\n\s+Claude: built, with tests\n\s+✦ no summary \(rate_limit 429\)/)
+  // The summary hears both what was asked first and what was added.
+  expect(prompts[0]).toMatch(/build it\nAlso asked during the task: also add tests/)
+})
+
+test('a queued prompt that gets a turn of its own keeps one line, and it can jump', async ($, on) => {
+  const clock = engine(on)
+  on('session.surfaces', () => ({ value: [] }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'no surface places panes' } }))
+  await measured($, measure(60_000, 10))
+  const row = (door: string, uuid: string, text: string) =>
+    $.session.append({ door, uuid, message: { type: 'user', content: [{ type: 'text', text }] } } as never)
+  await row('prompt', 'u1', 'first')
+  await $.turn.start({ text: 'first', turnId: 't1' })
+  await row('queue', 'q2', 'second')
+  await $.turn.complete({ answer: 'one', durationMs: 2000, isAborted: false, turnId: 't1', reason: 'answer' })
+  await row('prompt', 'u2', 'second')
+  await $.turn.start({ text: 'second', turnId: 't2' })
+  await $.turn.complete({ answer: 'two', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer' })
+  await clock.advance(1)
+  const text = (await run($, 'history')).text ?? ''
+  expect(text.match(/You: second/g)?.length ?? 0).toBe(1)
+  expect(text).toMatch(/You: second\n\s+Claude: two\n\s+1s/)
+  expect(text).toMatch(/You: first\n\s+Claude: one\n\s+2s/)
+})

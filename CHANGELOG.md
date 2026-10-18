@@ -1,5 +1,12 @@
 # Changelog
 
+## context-gauge 1.1.3
+
+- Fixed: a prompt sent while Claude was working took over the line of the task still running. That line turned amber as if stopped, and its time, answer and AI summary landed on the new prompt. Each History line now belongs to the turn that answered it.
+- A prompt sent while Claude works now gets its own line too. If Claude folds it into the running task, the line says "sent mid-task" and the task's summary covers both requests; if it waits for its own turn, it keeps one line.
+- AI summaries use Haiku 5.5, falling back to whichever Haiku `haiku` names where 5.5 is not served. A summary that cannot be made now says why (for example `rate_limit 429`) instead of vanishing.
+- `/gauge history` draws live on mobile, as `/gauge timeline` did.
+
 ## context-gauge 1.1.2
 
 - Ready for Anthropic's plugin directory: a README inside the plugin folder that lists everything it sends, runs and changes; `displayName`, `homepage`, `repository` and `keywords` in `plugin.json`.
