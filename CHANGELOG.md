@@ -1,5 +1,9 @@
 # Changelog
 
+## context-gauge 1.1.7
+
+- For Anthropic's plugin directory: the slider's `Client` is created the way the mods documentation writes elements, `Client({ module: './slider.tsx', ... })`, so the directory can read its module path.
+
 ## context-gauge 1.1.6
 
 - For Anthropic's plugin directory: `Client`, `Svg` and `Input` now come straight off `$.ui.resolve(e)`, with no type casts, and the slider is drawn by one helper. The directory can now follow the `Client` element to its fixed module path, `./slider.tsx`.

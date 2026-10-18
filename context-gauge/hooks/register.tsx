@@ -1556,7 +1556,7 @@ type SliderProps = { labels: string[]; locked: boolean[]; active: number | null;
 function sliderClient($: EngineInterface, e: RenderInput, key: string, props: SliderProps, width: number) {
   if (e.surface !== 'terminal' && e.surface !== 'desktop') return null
   const { Client } = $.ui.resolve(e)
-  return <Client key={key} module="./slider.tsx" props={props} width={width} />
+  return Client({ key, module: './slider.tsx', props, width })
 }
 
 // The band's model control: a small track to drag, and the name, which opens
