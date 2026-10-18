@@ -1,5 +1,9 @@
 # Changelog
 
+## context-gauge 1.1.6
+
+- For Anthropic's plugin directory: `Client`, `Svg` and `Input` now come straight off `$.ui.resolve(e)`, with no type casts, and the slider is drawn by one helper. The directory can now follow the `Client` element to its fixed module path, `./slider.tsx`.
+
 ## context-gauge 1.1.5
 
 - For Anthropic's plugin directory: a callback parameter named `h`, the JSX factory's name, made the directory distrust every element in the file, so it could not read the slider's module path. The parameter is renamed, and the slider is written as a plain `<Client module="./slider.tsx">` tag again.

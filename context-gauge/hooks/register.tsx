@@ -1,14 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type {
-  ClientProps,
-  ElementConstructor,
-  InputProps,
   EngineInterface,
   Register,
   RenderChildren,
   RenderInput,
   SessionRateLimit,
-  SvgProps,
   Timer,
 } from 'claude-code'
 
@@ -204,7 +200,7 @@ function fitTextBand(m: Meter, ctx: number, now: number, cells: number) {
 // The surface's `Svg`, where it draws one (every surface but the terminal).
 // The Terminal look draws text everywhere, as the terminal does.
 const svgOf = ($: EngineInterface, e: RenderInput, style: LookStyle) =>
-  e.surface === 'terminal' || style === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
+  e.surface === 'terminal' || style === 'terminal' ? undefined : $.ui.resolve(e).Svg
 
 // ---------- plumbing ----------
 
@@ -1373,7 +1369,7 @@ async function settingsText($: EngineInterface) {
 
 async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
-  const Input = e.surface === 'mobile' ? undefined : ($.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }).Input
+  const Input = e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input
   await lookOf($)
   const s = await read($, settings)
   const c = await read($, current)
@@ -1553,6 +1549,16 @@ async function drawSettings($: EngineInterface, e: RenderInput<'Pane' | 'Command
   )
 }
 
+// The slider's surface module, on the surfaces that run one. `Client` comes
+// straight off `$.ui.resolve`, so the directory reads the module path.
+type SliderProps = { labels: string[]; locked: boolean[]; active: number | null; accent: string; compact?: boolean; rail?: string }
+
+function sliderClient($: EngineInterface, e: RenderInput, key: string, props: SliderProps, width: number) {
+  if (e.surface !== 'terminal' && e.surface !== 'desktop') return null
+  const { Client } = $.ui.resolve(e)
+  return <Client key={key} module="./slider.tsx" props={props} width={width} />
+}
+
 // The band's model control: a small track to drag, and the name, which opens
 // the picker inside the band.
 async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
@@ -1561,31 +1567,20 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   const c = await read($, current)
   const isOpen = await read($, isPickerOpen)
   const { Box, Button } = $.ui.resolve(e)
-  const Client =
-    e.surface === 'terminal' || e.surface === 'desktop'
-      ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client
-      : undefined
   const at = activeSlot(c, s.models)
   const slot = at === null ? undefined : s.models.slots[at]
   const name = slot ? slotLabel(slot) : c.model ? modelLabel(familyOf(c.model) ?? c.model) : 'Model'
   const n = s.models.slots.length
   return (
     <Box flexDirection="row" gap={1} flexShrink={0}>
-      {Client && (
-        <Client
-          key="model-track"
-          module="./slider.tsx"
-          props={{
-            labels: s.models.slots.map(slotLabel),
-            locked: s.models.slots.map(x => isLocked(x, s.models)),
-            active: at,
-            accent: CLAUDE,
-            compact: true,
-            rail: (c.theme ?? '').startsWith('light') ? '#dcdce0' : '#3a3b40',
-          }}
-          width={(n - 1) * 5 + 3}
-        />
-      )}
+      {sliderClient($, e, 'model-track', {
+        labels: s.models.slots.map(slotLabel),
+        locked: s.models.slots.map(x => isLocked(x, s.models)),
+        active: at,
+        accent: CLAUDE,
+        compact: true,
+        rail: (c.theme ?? '').startsWith('light') ? '#dcdce0' : '#3a3b40',
+      }, (n - 1) * 5 + 3)}
       <Button
         key="model-chip"
         label={`${c.fast ? '⚡ ' : ''}${name} ${isOpen ? '⌄' : '›'}`}
@@ -1620,7 +1615,7 @@ async function drawInlinePicker($: EngineInterface, e: RenderInput<'AbovePrompt'
   const at = activeSlot(c, s.models)
   const slots = s.models.slots
   const locked = slots.map(x => isLocked(x, s.models))
-  const Svg = e.surface === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
+  const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.rule} paddingX={1}>
       <Box flexDirection="row" gap={2} alignItems="center">
@@ -1751,9 +1746,7 @@ async function drawPicker($: EngineInterface, e: RenderInput<'Pane' | 'CommandOu
   const slots = s.models.slots
   const locked = slots.map(x => isLocked(x, s.models))
   const slot = at === null ? undefined : slots[at]
-  const Svg = e.surface === 'terminal' ? undefined : ($.ui.resolve(e) as { Svg?: ElementConstructor<SvgProps> }).Svg
-  const Client =
-    e.surface === 'terminal' ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client : undefined
+  const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
   const effortWord: Record<EffortName, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' }
 
   const title = (
@@ -1765,13 +1758,14 @@ async function drawPicker($: EngineInterface, e: RenderInput<'Pane' | 'CommandOu
     </Box>
   )
 
-  const track = Client ? (
-    <Client key="model-slider" module="./slider.tsx" props={{ labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }} width={slots.length * 14} />
+  // Drag on the terminal's slider; elsewhere the pill is a picture.
+  const track = e.surface === 'terminal' ? (
+    sliderClient($, e, 'model-slider', { labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }, slots.length * 14)
   ) : Svg ? (
     <Svg source={pill(slots.length, at, locked, PILL_FILL)} alt={`position ${at === null ? 'none' : at + 1} of ${slots.length}`} />
   ) : null
 
-  const picks = !Client && (
+  const picks = e.surface !== 'terminal' && (
     <Box flexDirection="row" flexWrap="wrap" gap={1}>
       {slots.map((x, i) => (
         <Button
@@ -1814,16 +1808,12 @@ async function drawModelRow($: EngineInterface, e: RenderInput<'AbovePrompt' | '
   if (!s.models.isShown) return null
   const c = await read($, current)
   const { Box, Text, Button } = $.ui.resolve(e)
-  const Client =
-    e.surface === 'terminal' || e.surface === 'desktop'
-      ? ($.ui.resolve(e) as { Client?: ElementConstructor<ClientProps> }).Client
-      : undefined
   const active = activeSlot(c, s.models)
   const labels = s.models.slots.map(slotLabel)
   const locked = s.models.slots.map(x => isLocked(x, s.models))
   const room = (e.component === 'AbovePrompt' ? e.props.bodyColumns : (e.viewport?.columns ?? 80)) - 24
-  const slider = Client ? (
-    <Client key="model-slider" module="./slider.tsx" props={{ labels, locked, active, accent: C.accent }} width={Math.max(30, Math.min(labels.length * 14, room))} />
+  const slider = e.surface === 'terminal' || e.surface === 'desktop' ? (
+    sliderClient($, e, 'model-slider', { labels, locked, active, accent: C.accent }, Math.max(30, Math.min(labels.length * 14, room)))
   ) : (
     <Box flexDirection="row" flexWrap="wrap" gap={1}>
       {labels.map((label, i) => (
@@ -1884,7 +1874,7 @@ async function timelineText($: EngineInterface) {
 // filter narrows it; a press on a prompt jumps back to it.
 async function drawTimeline($: EngineInterface, e: RenderInput<'Pane' | 'CommandOutput'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
-  const Input = e.surface === 'mobile' ? undefined : ($.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }).Input
+  const Input = e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input
   await lookOf($)
   const all = await read($, timeline)
   const query = (await read($, historyQuery)).trim().toLowerCase()
