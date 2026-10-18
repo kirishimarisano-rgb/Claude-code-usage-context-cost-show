@@ -128,9 +128,9 @@ const colorOf = (t: Tones, r: Reading) =>
 
 const fillOf = (r: Reading, w: number) => (r.ratio === null ? 0 : Math.max(0, Math.min(1, r.ratio)) * w)
 
-const svg = (w: number, h: number, scale: number, s: LookStyle, body: string) => {
+const svg = (w: number, height: number, scale: number, s: LookStyle, body: string) => {
   const W = Math.ceil(w * scale)
-  const H = Math.ceil(h * scale)
+  const H = Math.ceil(height * scale)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${style(s)}<g transform="scale(${scale})">${body}</g></svg>`
 }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## context-gauge 1.1.5
+
+- For Anthropic's plugin directory: a callback parameter named `h`, the JSX factory's name, made the directory distrust every element in the file, so it could not read the slider's module path. The parameter is renamed, and the slider is written as a plain `<Client module="./slider.tsx">` tag again.
+
 ## context-gauge 1.1.4
 
 - For Anthropic's plugin directory: the slider's module path is written in the object form the directory reads, the two fetch addresses are fixed at their calls, and a parameter that shadowed `on` is renamed.

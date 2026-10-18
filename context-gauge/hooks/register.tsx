@@ -1051,7 +1051,7 @@ export const register: Register = on => {
         tools: l.tools.length,
         isAborted: e.isAborted,
       }
-      await update($, history, h => [...h, row].slice(-20))
+      await update($, history, rows => [...rows, row].slice(-20))
       await update($, live, () => null)
       const finished = await updateTurn($, e.turnId, x => ({
         ...x,
@@ -1572,20 +1572,19 @@ async function drawChip($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   return (
     <Box flexDirection="row" gap={1} flexShrink={0}>
       {Client && (
-        // The module path as the object form spells it, a literal the directory reads.
-        h(Client, {
-          key: 'model-track',
-          module: './slider.tsx',
-          props: {
+        <Client
+          key="model-track"
+          module="./slider.tsx"
+          props={{
             labels: s.models.slots.map(slotLabel),
             locked: s.models.slots.map(x => isLocked(x, s.models)),
             active: at,
             accent: CLAUDE,
             compact: true,
             rail: (c.theme ?? '').startsWith('light') ? '#dcdce0' : '#3a3b40',
-          },
-          width: (n - 1) * 5 + 3,
-        })
+          }}
+          width={(n - 1) * 5 + 3}
+        />
       )}
       <Button
         key="model-chip"
@@ -1767,7 +1766,7 @@ async function drawPicker($: EngineInterface, e: RenderInput<'Pane' | 'CommandOu
   )
 
   const track = Client ? (
-    h(Client, { key: 'model-slider', module: './slider.tsx', props: { labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }, width: slots.length * 14 })
+    <Client key="model-slider" module="./slider.tsx" props={{ labels: slots.map(slotLabel), locked, active: at, accent: PILL_FILL }} width={slots.length * 14} />
   ) : Svg ? (
     <Svg source={pill(slots.length, at, locked, PILL_FILL)} alt={`position ${at === null ? 'none' : at + 1} of ${slots.length}`} />
   ) : null
@@ -1824,7 +1823,7 @@ async function drawModelRow($: EngineInterface, e: RenderInput<'AbovePrompt' | '
   const locked = s.models.slots.map(x => isLocked(x, s.models))
   const room = (e.component === 'AbovePrompt' ? e.props.bodyColumns : (e.viewport?.columns ?? 80)) - 24
   const slider = Client ? (
-    h(Client, { key: 'model-slider', module: './slider.tsx', props: { labels, locked, active, accent: C.accent }, width: Math.max(30, Math.min(labels.length * 14, room)) })
+    <Client key="model-slider" module="./slider.tsx" props={{ labels, locked, active, accent: C.accent }} width={Math.max(30, Math.min(labels.length * 14, room))} />
   ) : (
     <Box flexDirection="row" flexWrap="wrap" gap={1}>
       {labels.map((label, i) => (
